@@ -1,0 +1,50 @@
+{
+  "name": "forgelens",
+  "displayName": "ForgeLens",
+  "description": "A coding agent for VS Code whose agent loop runs on TrueForge. Nothing touches disk until a human accepts a hunk, and the agent always shows what it read and why.",
+  "version": "0.0.1",
+  "publisher": "hackbuddy1",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hackbuddy1/forgelens.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=22.14.0"
+  },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      {
+        "command": "forgelens.hello",
+        "title": "ForgeLens: Show status"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start:trueforge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-trueforge.ps1",
+    "spike": "tsx scripts/spike-p0.ts",
+    "prepare": "git config core.hooksPath .githooks"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@truefoundry/trueforge-sdk": "^0.183.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/vscode": "~1.90.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.1.0"
+  }
+}

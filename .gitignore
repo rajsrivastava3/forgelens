@@ -1,0 +1,13 @@
+node_modules/
+out/
+dist/
+*.vsix
+coverage/
+*.log
+
+# Secrets and local model config. Only config/models.example.json is committed.
+.env
+.env.*
+config/models.json
+*.sqlite
+*.sqlite-*
