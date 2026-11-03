@@ -1,0 +1,56 @@
+{
+ "session_id": "01m6h3q2dfk3tbzt73z143jv3m",
+ "turns": [
+  {
+   "turn_id": "01m6h3q2dmxdrr57gm0ea4ccvr",
+   "events": [
+    {
+     "type": "turn.created",
+     "id": "01m6h3q2dqqh0rjcbjfrnhznaf",
+     "turn_id": "01m6h3q2dmxdrr57gm0ea4ccvr",
+     "previous_turn_id": null,
+     "input": [
+      {
+       "type": "user.message",
+       "content": "Read src/flask/helpers.py and tell me the line where get_debug_flag is defined"
+      }
+     ],
+     "state": {
+      "status": "running"
+     },
+     "created_at": "2026-11-03T16:26:13.302Z",
+     "thread_id": null
+    },
+    {
+     "type": "mcp.initialize",
+     "id": "01m6h3q2e26v4mkh0tyfpzdwk7",
+     "created_at": "2026-11-03T16:26:13.314Z",
+     "thread_id": "main",
+     "mcp_servers": [
+      {
+       "name": "forgelens-editor",
+       "id": "forgelens-editor",
+       "transport_type": "streamable-http"
+      }
+     ]
+    },
+    {
+     "type": "turn.done",
+     "id": "01m6h3q7jp4dsycsscjt6kb0t8",
+     "created_at": "2026-11-03T16:26:18.582Z",
+     "state": {
+      "status": "error",
+      "message": "[Model Error] Request failed (429): You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash, description: Generate content requests per day limit exceeded on Free Tier. See https://ai.google.dev/gemini-api/docs/rate-limits.\nPlease retry in 15h33m42.391686148s.",
+      "completed_at": "2026-11-03T16:26:18.582Z",
+      "metrics": {
+       "total_input_tokens": 0,
+       "total_output_tokens": 0,
+       "total_tokens": 0
+      }
+     },
+     "thread_id": null
+    }
+   ]
+  }
+ ]
+}

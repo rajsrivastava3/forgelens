@@ -1,0 +1,243 @@
+{
+ "session_id": "01m6gv2vwe3jyh95ejbne5e3at",
+ "turns": [
+  {
+   "turn_id": "01m6gv2vwkmc14j5tnpary22zd",
+   "events": [
+    {
+     "type": "turn.created",
+     "id": "01m6gv2vwpgqzeyxrtpm92hxrw",
+     "turn_id": "01m6gv2vwkmc14j5tnpary22zd",
+     "previous_turn_id": null,
+     "input": [
+      {
+       "type": "user.message",
+       "content": "Use call_tool to call apply_changes_probe exactly once with summary \"probe-preloaded-via-call-tool-allow-6ba193\". If it is denied, do not retry; say so and stop."
+      }
+     ],
+     "state": {
+      "status": "running"
+     },
+     "created_at": "2026-11-03T13:55:22.645Z",
+     "thread_id": null
+    },
+    {
+     "type": "mcp.initialize",
+     "id": "01m6gv2vx2awzkmrqx5x9ck5ga",
+     "created_at": "2026-11-03T13:55:22.658Z",
+     "thread_id": "main",
+     "mcp_servers": [
+      {
+       "name": "forgelens-editor",
+       "id": "forgelens-editor",
+       "transport_type": "streamable-http"
+      }
+     ]
+    },
+    {
+     "tool_calls": [
+      {
+       "id": "call_6365",
+       "type": "function",
+       "function": {
+        "name": "call_tool",
+        "arguments": "{\"input\":{\"summary\":\"probe-preloaded-via-call-tool-allow-6ba193\"},\"mcp_server\":\"forgelens-editor\",\"tool_name\":\"apply_changes_probe\"}"
+       },
+       "provider_specific_fields": {
+        "thought_signature": "EmAKXgFpFH0T55NXaGtuftzzuF5TudjfIkFJ7knRjl1NNB6lmlVIrA0pSxRQ/0tfh7gb2ydUfjtCq7zV6iR7+Svo9zUBLXoFinZYAB5/l7XdKDaD6wg5Z+Xm88BjK9vN4QU="
+       },
+       "tool_info": {
+        "type": "truefoundry-system",
+        "name": "call_tool"
+       }
+      }
+     ],
+     "type": "model.message",
+     "id": "01m6gv2vx3qg31a43bdw0paesf",
+     "created_at": "2026-11-03T13:55:24.105Z",
+     "thread_id": "main",
+     "finish_reason": "tool_calls",
+     "usage": {
+      "input_tokens": 1509,
+      "output_tokens": 60,
+      "cache_read_tokens": 0,
+      "input_tokens_breakdown": {
+       "harness": 1237,
+       "skills": 0,
+       "instructions": 44,
+       "tool_definitions": 223,
+       "messages": 5
+      }
+     },
+     "model": {
+      "name": "google-gemini/gemini-flash-lite-latest",
+      "params": {
+       "max_tokens": 65536
+      }
+     }
+    },
+    {
+     "type": "tool.approval_required",
+     "id": "01m6gv2xabes8cf517g10h7ac5",
+     "created_at": "2026-11-03T13:55:24.107Z",
+     "thread_id": "main",
+     "tool_calls": [
+      {
+       "id": "call_6365",
+       "source_event_id": "01m6gv2vx3qg31a43bdw0paesf"
+      }
+     ]
+    },
+    {
+     "type": "turn.done",
+     "id": "01m6gv2xabes8cf517g10h7ac6",
+     "created_at": "2026-11-03T13:55:24.107Z",
+     "state": {
+      "status": "done",
+      "output": null,
+      "required_actions": [
+       {
+        "type": "tool.approval_required",
+        "id": "01m6gv2xabes8cf517g10h7ac5",
+        "created_at": "2026-11-03T13:55:24.107Z",
+        "thread_id": "main",
+        "tool_calls": [
+         {
+          "id": "call_6365",
+          "source_event_id": "01m6gv2vx3qg31a43bdw0paesf"
+         }
+        ]
+       }
+      ],
+      "completed_at": "2026-11-03T13:55:24.107Z",
+      "metrics": {
+       "total_input_tokens": 1509,
+       "total_output_tokens": 60,
+       "total_tokens": 1569,
+       "total_cache_read_tokens": 0,
+       "total_reasoning_tokens": 0
+      }
+     },
+     "thread_id": null
+    }
+   ]
+  },
+  {
+   "turn_id": "01m6gv2xaf1wgbpbt60k67kter",
+   "events": [
+    {
+     "type": "turn.created",
+     "id": "01m6gv2xamqdzmzjhwjz5y5vfq",
+     "turn_id": "01m6gv2xaf1wgbpbt60k67kter",
+     "previous_turn_id": "01m6gv2vwkmc14j5tnpary22zd",
+     "input": [
+      {
+       "type": "user.tool_approval",
+       "thread_id": "main",
+       "tool_call_id": "call_6365",
+       "approval": {
+        "status": "allow"
+       }
+      }
+     ],
+     "state": {
+      "status": "running"
+     },
+     "created_at": "2026-11-03T13:55:24.114Z",
+     "thread_id": null
+    },
+    {
+     "type": "mcp.initialize",
+     "id": "01m6gv2xaxy0280x46nc7p0prf",
+     "created_at": "2026-11-03T13:55:24.125Z",
+     "thread_id": "main",
+     "mcp_servers": [
+      {
+       "name": "forgelens-editor",
+       "id": "forgelens-editor",
+       "transport_type": "streamable-http"
+      }
+     ]
+    },
+    {
+     "tool_call_id": "call_6365",
+     "content": "probe executed: probe-preloaded-via-call-tool-allow-6ba193",
+     "type": "tool.response",
+     "id": "01m6gv2xb1hrz4hcvfwre1vtn0",
+     "created_at": "2026-11-03T13:55:24.129Z",
+     "thread_id": "main"
+    },
+    {
+     "content": "The `apply_changes_probe` tool was successfully called with the summary \"probe-preloaded-via-call-tool-allow-6ba193\", and it executed successfully.",
+     "type": "model.message",
+     "id": "01m6gv2xb2bhkm3ey68jgktxxh",
+     "created_at": "2026-11-03T13:55:25.638Z",
+     "thread_id": "main",
+     "finish_reason": "stop",
+     "usage": {
+      "input_tokens": 1611,
+      "output_tokens": 40,
+      "cache_read_tokens": 0,
+      "input_tokens_breakdown": {
+       "harness": 1237,
+       "skills": 0,
+       "instructions": 44,
+       "tool_definitions": 223,
+       "messages": 107
+      }
+     },
+     "model": {
+      "name": "google-gemini/gemini-flash-lite-latest",
+      "params": {
+       "max_tokens": 65536
+      }
+     }
+    },
+    {
+     "type": "turn.done",
+     "id": "01m6gv2yt8ebtptnm3bcdnj3x3",
+     "created_at": "2026-11-03T13:55:25.639Z",
+     "state": {
+      "status": "done",
+      "output": {
+       "content": "The `apply_changes_probe` tool was successfully called with the summary \"probe-preloaded-via-call-tool-allow-6ba193\", and it executed successfully.",
+       "type": "model.message",
+       "id": "01m6gv2xb2bhkm3ey68jgktxxh",
+       "created_at": "2026-11-03T13:55:25.638Z",
+       "thread_id": "main",
+       "finish_reason": "stop",
+       "usage": {
+        "input_tokens": 1611,
+        "output_tokens": 40,
+        "cache_read_tokens": 0,
+        "input_tokens_breakdown": {
+         "harness": 1237,
+         "skills": 0,
+         "instructions": 44,
+         "tool_definitions": 223,
+         "messages": 107
+        }
+       },
+       "model": {
+        "name": "google-gemini/gemini-flash-lite-latest",
+        "params": {
+         "max_tokens": 65536
+        }
+       }
+      },
+      "required_actions": [],
+      "completed_at": "2026-11-03T13:55:25.639Z",
+      "metrics": {
+       "total_input_tokens": 1611,
+       "total_output_tokens": 40,
+       "total_tokens": 1651,
+       "total_cache_read_tokens": 0,
+       "total_reasoning_tokens": 0
+      }
+     },
+     "thread_id": null
+    }
+   ]
+  }
+ ]
+}
