@@ -22,6 +22,7 @@ Cost so far: $0 (free-tier keys).
 | `google-gemini/gemini-3-7-flash` | not proven | - | not tested | not tested | no response | 429 |
 | `google-gemini/gemma-4-31b-it` | no | - | not tested | not tested | 57.5 s to first token | 500, high-demand error |
 | `groq/gpt-oss-120b` | **fails** | - | not tested | not tested | 0.7 s, then 400 | see Groq below |
+| `groq/llama-3-3-70b-versatile` | **fails** | - | not reached | not reached | 404 in under 1 s | shut down by Groq, see below |
 
 Note 1: `gemini-3-6-flash` created a subagent thread and our server logged the read, but the run hit my
 time limit before the per-thread attribution was written, and the subagent turn took 96 s.
@@ -42,9 +43,38 @@ the time of counting, most of them from retrying `gemini-3.8-flash` after its da
 
 One 503 took 139 s to surface as a failed turn, which supports a first-token timeout in ModelChain.
 
-## Groq: `openai/gpt-oss-120b` does not work through TrueForge 0.183.0
+## Multi-file bake-off
 
-The model is live and makes the first tool call. The next request then fails every time:
+`scripts/bakeoff.ts` gives a model the same task on a throwaway copy of Flask: add `env_flag` to the
+helpers, export it from the package and add a test, without being told the file names. The script then
+runs the code itself: a behaviour check and `pytest tests/test_helpers.py`. Spent: 30 requests in 259 s.
+
+| Model | Result | Found the files itself | Edits | Requests | Time | Tokens in / out |
+|---|---|---|---|---|---|---|
+| `gemini-flash-lite-latest` | **pass**: behaviour correct, 48 tests pass, 14 of them new | yes, all 3 | 3 applied, 0 failed | 22 | 92 s, including a 49 s rate-limit wait | 119,355 / 1,419 |
+| `gemini-3-6-flash` | quota-blocked (per-day limit) | no | none | 4 | 86 s | 2,132 / 460 |
+| `gemini-3-5-flash` | quota-blocked (per-day limit) | no | none | 3 | 75 s | none reported |
+| `groq/llama-3-3-70b-versatile` | failed: 404 | no | none | 1 | 1 s | none |
+| `gemini-3-8-flash` | not run: per-day quota still exhausted | - | - | - | - | - |
+
+The two blocked Gemini models had already spent their daily quota on earlier tests today, so they were
+**not compared on quality**. One pass on one task is also not proof that a model can do Task B.
+
+Cost: `turn.done` reported $0 for every run. That reflects free-tier keys or no price data, so it says
+nothing about what a paid key would cost. Use the token counts for that estimate.
+
+The check on `gemini-3-8-flash` at 21:56 IST returned this body, so quota had not reset:
+
+```
+[Model Error] Request failed (429): You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit.
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash, description: Generate content requests per day limit exceeded on Free Tier. See https://ai.google.dev/gemini-api/docs/rate-limits.
+Please retry in 15h33m42.391686148s.
+```
+
+## Groq
+
+**`openai/gpt-oss-120b` does not work through TrueForge 0.183.0.** The model is live and makes the first
+tool call. The next request then fails every time:
 
 ```
 [Model Error] Request failed (400): 'messages.2' : for 'role:assistant' the following must be
@@ -54,19 +84,30 @@ satisfied[('messages.2' : property 'reasoning_content' is unsupported)]
 Cause, from the TrueForge source: the OpenAI-compatible adapter replays model reasoning as
 `reasoning_content`, and Groq rejects that field. Groq's docs offer `include_reasoning: false` for
 GPT-OSS models, but TrueForge only forwards an allowlist of body fields to compatible endpoints, and
-this is not on it. We tried it and got the same error.
+this is not on it. We tried it and got the same error. This looks like an upstream TrueForge issue for
+providers that reject replayed reasoning, and may be worth reporting.
 
-This looks like an upstream TrueForge issue for providers that reject replayed reasoning, and may be
-worth reporting.
+**`llama-3.3-70b-versatile` no longer exists.** Groq returns "does not exist or you do not have access
+to it". Groq's deprecations page lists its shutdown as 16 August 2026, although its models page still
+lists it. Check the deprecations page when choosing a Groq model.
 
-Replacement chosen for testing: `llama-3.3-70b-versatile`. Groq documents tool use for it. Whether it
-avoids the error is **not yet verified**.
+**Next candidate, not yet tested: `qwen/qwen3.8-27b`.** Groq documents tool use for it, and says it returns
+no reasoning tokens at its default effort, which should avoid the error above. It is a preview model, and
+Groq says those may be discontinued at short notice.
+
+## Recommendation
+
+- **Primary: `google-gemini/gemini-flash-lite-latest`.** It is the only model with evidence for every
+  behaviour: tool calls, a subagent, approval on every path, and the multi-file task.
+- **Fallback: not decided.** No second model has passed yet. `groq/qwen3-8-27b` is the candidate, because
+  a different provider also survives a Gemini outage. `gemini-3-1-flash-lite` passed the read test and could
+  stand in, but it uses the same key and may share quota with the primary.
 
 ## What this means
 
 - The extension cannot assume a named model is usable on a given day, so ModelChain needs to treat 429
   and 503 as normal events.
-- `gemini-flash-lite-latest` is the most dependable model tested on this free tier. Its daily limit was
-  not reached and is not known.
+- `gemini-flash-lite-latest` is the most dependable model tested on this free tier. It did hit its
+  per-minute limit once in the bake-off. Its daily limit was not reached and is not known.
 - Task B needs many requests per turn. A 20-per-day model cannot rehearse it, so budget quota for
   recording day or use a paid key.
