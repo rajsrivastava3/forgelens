@@ -76,12 +76,13 @@ describe('AgentController', () => {
   });
 
   it('shows a clear message when setup fails, and never rejects', async () => {
+    const message = 'TrueForge is not running at http://tf.test. Start it with scripts/start-trueforge.ps1.';
     const { instance, createSession } = controller(replaySessions([]), {
-      ensureReady: () => Promise.reject(new Error('TrueForge is not running at http://tf.test.')),
+      ensureReady: () => Promise.reject(new Error(message)),
     });
     await instance.send('hello');
     expect(instance.view.status).toBe('error');
-    expect(instance.view.error).toContain('TrueForge is not running');
+    expect(instance.view.error).toBe(message);
     expect(createSession).not.toHaveBeenCalled();
     expect(instance.isBusy).toBe(false);
   });

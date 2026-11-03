@@ -56,8 +56,18 @@ export class AgentController {
     this.builder.userMessage(message);
     this.options.onChange();
 
+    let model: string;
     try {
-      const model = await this.options.ensureReady();
+      model = await this.options.ensureReady();
+    } catch (error) {
+      // Setup failures are already written for the user, including what to do next.
+      this.builder.fail(error instanceof Error ? error.message : String(error));
+      this.busy = false;
+      this.options.onChange();
+      return;
+    }
+
+    try {
       // A session keeps the model it started with, so a switch needs a new one.
       if (!this.sessionId || model !== this.sessionModel) {
         this.sessionId = await this.options.createSession();
