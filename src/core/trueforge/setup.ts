@@ -63,7 +63,7 @@ export type ModelChoice =
 /** The first configured model TrueForge really has; with none configured, whatever TrueForge lists first. */
 export function chooseModel(configured: readonly string[], available: readonly string[]): ModelChoice {
   if (available.length === 0) {
-    return { ok: false, message: 'TrueForge has no models. Add one under Settings → Models in the TrueForge UI.' };
+    return { ok: false, message: 'TrueForge has no models. Add one under Settings > Models in the TrueForge UI.' };
   }
   const usable = configured.find((model) => available.includes(model));
   if (usable) {

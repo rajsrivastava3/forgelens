@@ -113,7 +113,7 @@ export class ReviewController
     });
   }
 
-  // The Changes tree: file -> hunks.
+  // The Changes tree: each file with its hunks under it.
   getChildren(node?: TreeNode): TreeNode[] {
     if (!node) return this.flow.isReviewing ? this.flow.changeset.files.map((change) => ({ kind: 'file', change })) : [];
     if (node.kind === 'file') return node.change.hunks.map((hunk) => ({ kind: 'hunk', change: node.change, hunk }));

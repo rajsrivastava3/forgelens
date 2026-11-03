@@ -1,5 +1,5 @@
 {
-  "//": "Example only. API keys live in TrueForge (Settings -> Models), never in this repo. This lists TrueForge model names in fallback order; copy the idea into the forgelens.models VS Code setting.",
+  "//": "Example only. API keys live in TrueForge (Settings > Models), never in this repo. This lists TrueForge model names in fallback order; copy the idea into the forgelens.models VS Code setting.",
   "forgelens.models": [
     "google-gemini/gemini-flash-latest",
     "groq/<your-groq-model-name>"

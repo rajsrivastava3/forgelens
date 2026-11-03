@@ -23,7 +23,7 @@ The undo stack lasts until the window closes.
 
 ## Try it
 
-1. Start TrueForge (below), then add a model under **Settings → Models** at <http://localhost:8790>.
+1. Start TrueForge (below), then add a model under **Settings > Models** at <http://localhost:8790>.
 2. In this folder run `npm install` and `npm run build`, open the folder in VS Code and press **F5**.
 3. In the new window, open the **ForgeLens** icon in the activity bar and ask a question about the repository.
 
