@@ -41,7 +41,7 @@ describe('TurnRunner replaying recorded turns', () => {
     if (outcome.status !== 'error') throw new Error(`expected an error, got ${outcome.status}`);
     expect(outcome.error.kind).toBe('quota');
     expect(outcome.error.message).toContain('requests per day');
-    expect(outcome.error.message).toContain('Retry in');
+    expect(outcome.error.message).toMatch(/Retry in (\d+h)?(\d+m)?\d+s\.$/);
     expect(outcome.error.message).not.toContain('[Model Error]');
   });
 

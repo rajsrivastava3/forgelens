@@ -47,9 +47,9 @@ export function describeTurnError(raw: string, baseUrl = 'http://localhost:8790'
 
   if (httpStatus === 429) {
     const limit = /description: ([^.\n]*)/.exec(detail)?.[1];
-    const retry = /retry in ([\dhms.]+)/i.exec(detail)?.[1];
+    const retry = /retry in ((?:\d+h)?(?:\d+m)?[\d.]+)s/i.exec(detail)?.[1];
     const parts = [`Model quota exceeded ${prefix}`.trim(), limit ? `: ${limit}.` : '.'];
-    const message = `${parts.join('')}${retry ? ` Retry in ${retry.replace(/\.\d+s$/, 's')}.` : ''}`;
+    const message = `${parts.join('')}${retry ? ` Retry in ${retry.replace(/\.\d+$/, '')}s.` : ''}`;
     return { kind: 'quota', httpStatus, message, raw };
   }
   if (httpStatus === 401 || httpStatus === 403) {

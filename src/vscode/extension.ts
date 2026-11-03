@@ -191,7 +191,11 @@ export function activate(context: vscode.ExtensionContext): void {
           });
       }
     }),
-    new vscode.Disposable(() => void mcp?.close()),
+    new vscode.Disposable(() => {
+      // A turn keeps running on the server after the editor closes, spending quota, unless told to stop.
+      controller.stop();
+      void mcp?.close();
+    }),
   );
 
   showStatus();

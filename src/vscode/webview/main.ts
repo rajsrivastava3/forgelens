@@ -85,7 +85,8 @@ function renderText(): Rendered {
 }
 
 function renderTool(): Rendered {
-  const node = element('details', 'tool');
+  const node = element('div', 'tool');
+  const details = element('details', 'tool-details');
   const summary = element('summary', 'tool-summary');
   const icon = element('span', 'tool-icon');
   const name = element('span', 'tool-name');
@@ -106,7 +107,9 @@ function renderTool(): Rendered {
   approvalButtons.append(allow, deny);
   approval.append(approvalText, approvalButtons);
   const body = element('pre', 'tool-result');
-  node.append(summary, approval, body);
+  details.append(summary, body);
+  // Outside the collapsible part: a decision the user cannot see would leave the run stuck.
+  node.append(details, approval);
 
   let toolId = '';
   allow.addEventListener('click', () => post({ type: 'decide', toolCallId: toolId, allow: true }));
@@ -271,7 +274,9 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
     render(message.state);
   } else if (message.type === 'probe-click') {
     const target = document.querySelector<HTMLElement>(message.selector);
-    const clicked = target !== null && !target.hidden && target.offsetParent !== null;
+    // A script can click what a person cannot see, so insist the target is really on screen.
+    const rect = target?.getBoundingClientRect();
+    const clicked = target !== null && target.checkVisibility() && (rect?.width ?? 0) > 0 && (rect?.height ?? 0) > 0;
     const started = performance.now();
     if (clicked) target.click();
     post({
