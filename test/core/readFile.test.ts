@@ -6,6 +6,8 @@ import { READ_FILE_MAX_LINES, readFileTool } from '../../src/core/tools/readFile
 const portWith = (text: string): EditorPort => ({
   workspaceRoot: '/ws',
   readTextFile: () => Promise.resolve(text),
+  listFiles: () => Promise.resolve([]),
+  getDiagnostics: () => Promise.resolve([]),
 });
 
 describe('readFileTool', () => {
@@ -27,6 +29,13 @@ describe('readFileTool', () => {
     const text = Array.from({ length: READ_FILE_MAX_LINES + 5 }, (_, i) => `l${i}`).join('\n');
     const out = await readFileTool(portWith(text), { path: 'x.py' });
     expect(out).toContain(`[truncated: call again with start_line=${READ_FILE_MAX_LINES + 1}`);
+  });
+
+  it('caps a file of very long lines by characters', async () => {
+    const text = Array.from({ length: 50 }, () => 'x'.repeat(2000)).join('\n');
+    const out = await readFileTool(portWith(text), { path: 'x.py' });
+    expect(out.length).toBeLessThan(25_000);
+    expect(out).toContain('[truncated: output exceeded');
   });
 });
 

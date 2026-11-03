@@ -1,4 +1,5 @@
 import type { EditorPort } from './editorPort';
+import { capText } from './output';
 
 export interface ReadFileArgs {
   path: string;
@@ -6,10 +7,6 @@ export interface ReadFileArgs {
   end_line?: number | undefined;
 }
 
-/**
- * Caps the returned text itself: TrueForge only offloads large tool responses when a sandbox is
- * enabled, and ForgeLens runs without one.
- */
 export const READ_FILE_MAX_LINES = 400;
 
 /** Returns numbered lines and says so when the result was truncated, so the model can page. */
@@ -26,5 +23,5 @@ export async function readFileTool(port: EditorPort, args: ReadFileArgs): Promis
   const header = `${args.path} (lines ${start}-${end} of ${lines.length})`;
   const footer =
     end < requestedEnd ? `\n[truncated: call again with start_line=${end + 1} to continue]` : '';
-  return `${header}\n${numbered.join('\n')}${footer}`;
+  return capText(`${header}\n${numbered.join('\n')}${footer}`, 'Request a smaller line range.');
 }
