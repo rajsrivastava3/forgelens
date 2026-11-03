@@ -22,6 +22,8 @@ export interface EditorMcpServerOptions {
   /** TCP port on 127.0.0.1. 0 picks a free port. */
   listenPort?: number;
   onToolCall?: (record: ToolCallRecord) => void;
+  /** Registers additional tools on each per-request server instance. */
+  configure?: (server: McpServer) => void;
 }
 
 export interface RunningEditorMcpServer {
@@ -58,6 +60,7 @@ function buildMcpServer(options: EditorMcpServerOptions): McpServer {
     },
   );
 
+  options.configure?.(server);
   return server;
 }
 

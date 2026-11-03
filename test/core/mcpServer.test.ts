@@ -21,6 +21,11 @@ beforeAll(async () => {
         p === 'hello.py' ? Promise.resolve('print("hi")\n') : Promise.reject(new Error('missing')),
     },
     onToolCall: (r) => calls.push(r),
+    configure: (mcp) => {
+      mcp.registerTool('extra_tool', { description: 'added by a test' }, () => ({
+        content: [{ type: 'text', text: 'extra' }],
+      }));
+    },
   });
 });
 
@@ -70,10 +75,10 @@ describe('editor MCP server', () => {
     expect(res.status).toBe(405);
   });
 
-  it('lists read_file with read-only annotations', async () => {
+  it('lists read_file with read-only annotations, plus configured tools', async () => {
     const client = await connect();
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(['read_file']);
+    expect(tools.map((t) => t.name)).toEqual(['read_file', 'extra_tool']);
     expect(tools[0]?.annotations?.readOnlyHint).toBe(true);
     await client.close();
   });
