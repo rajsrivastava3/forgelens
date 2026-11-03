@@ -20,7 +20,8 @@ export async function readFileTool(port: EditorPort, args: ReadFileArgs): Promis
   const end = Math.min(requestedEnd, start + READ_FILE_MAX_LINES - 1);
 
   const numbered = lines.slice(start - 1, end).map((line, i) => `${start + i}: ${line}`);
-  const header = `${args.path} (lines ${start}-${end} of ${lines.length})`;
+  const staged = port.isStaged?.(args.path) ? ', with your staged edits, not yet on disk' : '';
+  const header = `${args.path} (lines ${start}-${end} of ${lines.length}${staged})`;
   const footer =
     end < requestedEnd ? `\n[truncated: call again with start_line=${end + 1} to continue]` : '';
   return capText(`${header}\n${numbered.join('\n')}${footer}`, 'Request a smaller line range.');

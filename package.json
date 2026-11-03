@@ -38,6 +38,10 @@
           "type": "webview",
           "id": "forgelens.panel",
           "name": "Agent"
+        },
+        {
+          "id": "forgelens.changes",
+          "name": "Changes"
         }
       ]
     },
@@ -53,6 +57,45 @@
       {
         "command": "forgelens.newChat",
         "title": "ForgeLens: New chat"
+      },
+      {
+        "command": "forgelens.undo",
+        "title": "ForgeLens: Undo last applied change"
+      },
+      {
+        "command": "forgelens.review.acceptHunk",
+        "title": "Accept hunk",
+        "category": "ForgeLens",
+        "icon": "$(check)"
+      },
+      {
+        "command": "forgelens.review.rejectHunk",
+        "title": "Reject hunk",
+        "category": "ForgeLens",
+        "icon": "$(close)"
+      },
+      {
+        "command": "forgelens.review.acceptAll",
+        "title": "Accept all hunks",
+        "category": "ForgeLens",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "forgelens.review.rejectAll",
+        "title": "Reject all hunks",
+        "category": "ForgeLens",
+        "icon": "$(close-all)"
+      },
+      {
+        "command": "forgelens.review.apply",
+        "title": "Apply decisions",
+        "category": "ForgeLens",
+        "icon": "$(save)"
+      },
+      {
+        "command": "forgelens.review.open",
+        "title": "Open review",
+        "category": "ForgeLens"
       }
     ],
     "keybindings": [
@@ -89,6 +132,83 @@
           "description": "Use larger text in the agent panel, for recording."
         }
       }
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "forgelens.review.acceptAll",
+          "when": "resourceScheme == forgelens-proposed && forgelens.reviewing",
+          "group": "navigation@1"
+        },
+        {
+          "command": "forgelens.review.rejectAll",
+          "when": "resourceScheme == forgelens-proposed && forgelens.reviewing",
+          "group": "navigation@2"
+        },
+        {
+          "command": "forgelens.review.apply",
+          "when": "resourceScheme == forgelens-proposed && forgelens.reviewing",
+          "group": "navigation@3"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "forgelens.review.acceptAll",
+          "when": "view == forgelens.changes && forgelens.reviewing",
+          "group": "navigation@1"
+        },
+        {
+          "command": "forgelens.review.rejectAll",
+          "when": "view == forgelens.changes && forgelens.reviewing",
+          "group": "navigation@2"
+        },
+        {
+          "command": "forgelens.review.apply",
+          "when": "view == forgelens.changes && forgelens.reviewing",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "forgelens.review.acceptHunk",
+          "when": "view == forgelens.changes && viewItem == hunk",
+          "group": "inline@1"
+        },
+        {
+          "command": "forgelens.review.rejectHunk",
+          "when": "view == forgelens.changes && viewItem == hunk",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "forgelens.review.acceptHunk",
+          "when": "false"
+        },
+        {
+          "command": "forgelens.review.rejectHunk",
+          "when": "false"
+        },
+        {
+          "command": "forgelens.review.acceptAll",
+          "when": "forgelens.reviewing"
+        },
+        {
+          "command": "forgelens.review.rejectAll",
+          "when": "forgelens.reviewing"
+        },
+        {
+          "command": "forgelens.review.apply",
+          "when": "forgelens.reviewing"
+        },
+        {
+          "command": "forgelens.review.open",
+          "when": "forgelens.reviewing"
+        }
+      ]
+    },
+    "configurationDefaults": {
+      "diffEditor.codeLens": true
     }
   },
   "scripts": {
@@ -104,6 +224,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@truefoundry/trueforge-sdk": "0.183.0",
+    "diff": "^8.0.4",
     "zod": "^4.6.7"
   },
   "devDependencies": {

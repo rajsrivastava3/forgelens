@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
-import { readdir, readFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
-import type { DiagnosticInfo, EditorPort } from './editorPort';
+import type { DiagnosticInfo, FileWrite, WritablePort } from './editorPort';
 
 const execFileAsync = promisify(execFile);
 
@@ -58,8 +59,33 @@ async function walk(root: string, relativeDir: string): Promise<string[]> {
   return files;
 }
 
-/** Headless EditorPort, used by rehearsal scripts and tests. */
-export class NodeEditorPort implements EditorPort {
+async function readIfPresent(absolute: string): Promise<Uint8Array | undefined> {
+  try {
+    return await readFile(absolute);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+async function replaceFile(absolute: string, bytes: Uint8Array | undefined): Promise<void> {
+  if (bytes === undefined) {
+    await rm(absolute, { force: true });
+    return;
+  }
+  await mkdir(path.dirname(absolute), { recursive: true });
+  const temporary = `${absolute}.${randomBytes(4).toString('hex')}.forgelens-tmp`;
+  await writeFile(temporary, bytes);
+  try {
+    await rename(temporary, absolute);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
+/** Headless port, used by rehearsal scripts and tests. */
+export class NodeEditorPort implements WritablePort {
   constructor(readonly workspaceRoot: string) {}
 
   readTextFile(relativePath: string): Promise<string> {
@@ -73,5 +99,35 @@ export class NodeEditorPort implements EditorPort {
   /** There is no language server outside the editor. */
   getDiagnostics(): Promise<DiagnosticInfo[]> {
     return Promise.resolve([]);
+  }
+
+  readDiskBytes(relativePath: string): Promise<Uint8Array | undefined> {
+    return readIfPresent(resolveInsideWorkspace(this.workspaceRoot, relativePath));
+  }
+
+  /** No editor, so nothing can be unsaved. */
+  hasUnsavedChanges(): boolean {
+    return false;
+  }
+
+  async writeFiles(writes: readonly FileWrite[]): Promise<void> {
+    const targets = writes.map((write) => ({
+      absolute: resolveInsideWorkspace(this.workspaceRoot, write.path),
+      bytes: write.bytes,
+    }));
+    const before = await Promise.all(targets.map((target) => readIfPresent(target.absolute)));
+    const done: number[] = [];
+    try {
+      for (const [index, target] of targets.entries()) {
+        await replaceFile(target.absolute, target.bytes);
+        done.push(index);
+      }
+    } catch (error) {
+      for (const index of done.reverse()) {
+        const target = targets[index];
+        if (target) await replaceFile(target.absolute, before[index]);
+      }
+      throw error;
+    }
   }
 }
