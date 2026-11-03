@@ -6,8 +6,20 @@ A VS Code coding agent whose agent loop runs on [TrueForge](https://github.com/t
 
 **Starting point:** from scratch. **Licence:** MIT.
 
-Status: in development. The agent panel works and can read, search and answer. Editing and hunk review
-are next.
+Status: in development. The agent can read, search, answer and propose edits, and you review them hunk by hunk.
+Inline edit, the context engine and model fallback are next.
+
+## How a change reaches disk
+
+The agent stages edits, which write nothing. When it calls `apply_changes`, TrueForge pauses for approval and
+ForgeLens opens a review instead of a plain Allow button: one diff per file with **Accept hunk | Reject hunk**
+above every hunk, Accept all, Reject all and Apply decisions in the title bar, and a **Changes** tree. Only
+accepted hunks are written, in one atomic edit across files. **ForgeLens: Undo last applied change**, or Undo on
+the panel's card, restores every touched file. Undecided hunks count as rejected. If a file changed during
+review, ForgeLens recomputes the diff and asks again rather than overwriting it. Undo refuses to overwrite edits
+made after the apply. Stop discards everything staged.
+
+The undo stack lasts until the window closes.
 
 ## Try it
 
@@ -26,9 +38,10 @@ Only one VS Code window at a time can host the tools, because they use a fixed l
 ## Tests
 
 `npm test` runs the unit tests, which replay events recorded from real TrueForge sessions and use no model
-requests. `npm run test:e2e` drives the real panel in an Extension Development Host and saves screenshots to
-`docs/screenshots/`; it does use model requests. It downloads its own copy of VS Code, or set `VSCODE_EXE` to
-use another.
+requests. `npm run test:e2e` drives the real panel and review in an Extension Development Host, on a throwaway
+clone of Flask, and saves screenshots to `docs/screenshots/`. Its default scenarios use scripted events and no
+model requests; pass `live` as a scenario for a real agent run:
+`node test/e2e/launch.mjs <workDir> live`. It downloads its own copy of VS Code, or set `VSCODE_EXE` to use another.
 
 ## Start TrueForge locally
 

@@ -110,6 +110,12 @@ and 127 s later, with each model step taking about 45 s and no error reported. S
 per-minute error instead. The cause is not confirmed; heavy use that day and provider rate limiting are the
 likely explanations. Rehearsals on a free key can therefore be much slower than a single good run suggests.
 
+## P2 live review run
+
+On 4 November `gemini-flash-lite-latest` staged edits in two files and reached the review on the first try: 95 s
+in total including the scripted review, 8,340 tokens, no 429. It called `stage_edit` and `apply_changes`
+directly this time, not through `call_tool`. Session: `01m6hr3n5fa3m3kgwcedvcnj5t`.
+
 ## What this means
 
 - The extension cannot assume a named model is usable on a given day, so ModelChain needs to treat 429
