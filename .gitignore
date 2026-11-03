@@ -11,3 +11,4 @@ coverage/
 config/models.json
 *.sqlite
 *.sqlite-*
+.vscode-test/

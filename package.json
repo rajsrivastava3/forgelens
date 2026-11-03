@@ -18,16 +18,74 @@
     "Other"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [
-    "onStartupFinished"
-  ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forgelens",
+          "title": "ForgeLens",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "forgelens": [
+        {
+          "type": "webview",
+          "id": "forgelens.panel",
+          "name": "Agent"
+        }
+      ]
+    },
     "commands": [
       {
-        "command": "forgelens.hello",
-        "title": "ForgeLens: Show status"
+        "command": "forgelens.setup",
+        "title": "ForgeLens: Set up TrueForge"
+      },
+      {
+        "command": "forgelens.stop",
+        "title": "ForgeLens: Stop"
+      },
+      {
+        "command": "forgelens.newChat",
+        "title": "ForgeLens: New chat"
       }
-    ]
+    ],
+    "keybindings": [
+      {
+        "command": "forgelens.stop",
+        "key": "escape",
+        "when": "focusedView == forgelens.panel"
+      }
+    ],
+    "configuration": {
+      "title": "ForgeLens",
+      "properties": {
+        "forgelens.trueforgeUrl": {
+          "type": "string",
+          "default": "http://localhost:8790",
+          "description": "Where TrueForge is running."
+        },
+        "forgelens.models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "TrueForge model names, in order of preference, such as `provider/model`. The first one TrueForge has is used. When empty, ForgeLens uses the first model TrueForge lists."
+        },
+        "forgelens.mcpPort": {
+          "type": "number",
+          "default": 8799,
+          "description": "Local port for the editor tools server that TrueForge connects to."
+        },
+        "forgelens.panel.largeText": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use larger text in the agent panel, for recording."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs",
@@ -36,7 +94,8 @@
     "test": "vitest run",
     "start:trueforge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-trueforge.ps1",
     "spike": "tsx scripts/spike-p0.ts",
-    "prepare": "git config core.hooksPath .githooks"
+    "prepare": "git config core.hooksPath .githooks",
+    "test:e2e": "node test/e2e/launch.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
@@ -46,9 +105,13 @@
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@types/vscode": "~1.90.0",
+    "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^5.1.0"
-  }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ]
 }
