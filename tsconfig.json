@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "types": ["node"],
@@ -12,6 +12,7 @@
     "exactOptionalPropertyTypes": false,
     "forceConsistentCasingInFileNames": true,
     "esModuleInterop": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true
   },
