@@ -1,14 +1,20 @@
-// Runs test/e2e/run.ts inside a real VS Code Extension Development Host window, with the target repo
-// open and a throwaway profile. Usage: node test/e2e/launch.mjs <profileDir> [scenario,scenario]
-import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+// Runs test/e2e/run.ts inside a real VS Code Extension Development Host window, on a throwaway clone of
+// the target repo and a throwaway profile. Usage: node test/e2e/launch.mjs <workDir> [scenario,scenario]
+// The review scenarios write to disk, so the real flask folder is never opened here.
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { downloadAndUnzipVSCode } from '@vscode/test-electron';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const profile = path.resolve(process.argv[2] ?? path.join(root, 'out/e2e-profile'));
-const workspace = path.resolve(root, '../flask');
+const work = path.resolve(process.argv[2] ?? path.join(root, 'out/e2e-work'));
+const profile = path.join(work, 'profile');
+const workspace = path.join(work, 'flask-copy');
+
+rmSync(workspace, { recursive: true, force: true });
+mkdirSync(work, { recursive: true });
+execFileSync('git', ['clone', '--quiet', '-c', 'core.autocrlf=false', path.resolve(root, '../flask'), workspace]);
 
 // A separate copy of VS Code, so a test never depends on or disturbs the installed one.
 const executable = process.env.VSCODE_EXE ?? (await downloadAndUnzipVSCode('stable'));
@@ -35,10 +41,10 @@ writeFileSync(
 
 const env = {
   ...process.env,
-  FORGELENS_E2E_GATED_TOOL: '1',
+  FORGELENS_E2E: '1',
   FORGELENS_E2E_ROOT: root,
   FORGELENS_E2E_WORKSPACE: workspace,
-  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'ask,stream,stop,approval,offline',
+  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'review,reject,stop-review,stop-staging,drift,crlf',
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
@@ -57,4 +63,12 @@ const child = spawn(
   ],
   { env, stdio: 'inherit' },
 );
-child.on('exit', (code) => process.exit(code ?? 1));
+child.on('exit', (code) => {
+  const closeMarker = path.join(root, 'out/e2e-close-cancel.txt');
+  if ((process.argv[3] ?? '').includes('close-scripted')) {
+    console.log(`[e2e] after close: ${existsSync(closeMarker) ? readFileSync(closeMarker, 'utf8') : 'cancel was NOT sent'}`);
+  }
+  console.log(`[e2e] git status of the copy: "${execFileSync('git', ['-C', workspace, 'status', '--porcelain']).toString().trim()}"`);
+  rmSync(workspace, { recursive: true, force: true });
+  process.exit(code ?? 1);
+});
