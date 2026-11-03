@@ -13,6 +13,9 @@ export interface AgentPanelHandlers {
   onNewChat(): void;
   onOpenSession(): void;
   onSetup(): void;
+  onReviewOpen(): void;
+  onReviewApply(): void;
+  onUndo(): void;
 }
 
 export interface ProbeResult {
@@ -100,6 +103,15 @@ export class AgentPanel implements vscode.WebviewViewProvider {
         break;
       case 'setup':
         this.handlers.onSetup();
+        break;
+      case 'review-open':
+        this.handlers.onReviewOpen();
+        break;
+      case 'review-apply':
+        this.handlers.onReviewApply();
+        break;
+      case 'undo':
+        this.handlers.onUndo();
         break;
       case 'probe-result':
         this.probeWaiter?.(message);

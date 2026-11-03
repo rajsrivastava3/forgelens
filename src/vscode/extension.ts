@@ -1,21 +1,29 @@
 import { randomBytes } from 'node:crypto';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrueForge } from '@truefoundry/trueforge-sdk';
 import * as vscode from 'vscode';
-import { z } from 'zod';
 import agentDefinition from '../../agents/forgelens-agent.json';
 import inlineDefinition from '../../agents/forgelens-inline.json';
+import { APPLY_TOOL, ReviewFlow } from '../core/changeset/reviewFlow';
 import { startEditorMcpServer, type RunningEditorMcpServer } from '../core/mcp/server';
 import { AgentController } from '../core/trueforge/agentController';
 import { setUpTrueForge, type AgentDefinition } from '../core/trueforge/setup';
+import type { SessionsApi } from '../core/trueforge/turnRunner';
 import { AgentPanel } from './agentPanel';
 import type { PanelState } from './protocol';
+import { ReviewController } from './reviewController';
 import { VscodeEditorPort } from './vscodeEditorPort';
 
 const TOKEN_SECRET = 'forgelens.mcpToken';
 const AGENT_NAME = 'forgelens-agent';
 const AGENTS: AgentDefinition[] = [agentDefinition, inlineDefinition];
-const e2eGatedToolCalls: string[] = [];
+
+/** A scripted server for the end-to-end test, so most of it spends no model requests. */
+interface TestSessions {
+  api: SessionsApi;
+  sessionId: string;
+}
+
+let stopOnClose: (() => Promise<void>) | undefined;
 
 function config(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('forgelens');
@@ -41,12 +49,19 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(output, statusBar);
 
   const port = new VscodeEditorPort();
+  const flow = new ReviewFlow(port, {
+    onChange: () => review.refresh(),
+    onCard: (card) => controller.updateReview(card),
+    onWarning: (message) => void vscode.window.showWarningMessage(message),
+  });
+  const review = new ReviewController(flow, () => port.workspaceRoot);
   let mcp: RunningEditorMcpServer | undefined;
   let mcpToken: string | undefined;
   let banner: string | undefined;
   let activeModel: string | undefined;
   let client: TrueForge | undefined;
   let clientUrl: string | undefined;
+  let testSessions: TestSessions | undefined;
 
   const sdk = (): TrueForge => {
     if (!client || clientUrl !== baseUrl()) {
@@ -74,11 +89,10 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       mcp = await startEditorMcpServer({
         port,
+        flow,
         token: mcpToken,
         listenPort,
         onToolCall: (record) => output.appendLine(`[tool] ${record.tool} ok=${String(record.ok)} ${JSON.stringify(record.args)}`),
-        // Until P2 adds the real tool, the end-to-end test needs something the agent's gate applies to.
-        ...(process.env['FORGELENS_E2E_GATED_TOOL'] === '1' ? { configure: registerE2eGatedTool } : {}),
       });
       output.appendLine(`MCP server listening on ${mcp.url}`);
     } catch (error) {
@@ -124,17 +138,26 @@ export function activate(context: vscode.ExtensionContext): void {
   const controller = new AgentController({
     agentName: AGENT_NAME,
     baseUrl,
-    sessions: () => sdk().sessions,
-    createSession: async () => (await sdk().sessions.create({ agent: { name: AGENT_NAME } })).data.id,
+    sessions: () => testSessions?.api ?? sdk().sessions,
+    createSession: async () => testSessions?.sessionId ?? (await sdk().sessions.create({ agent: { name: AGENT_NAME } })).data.id,
     // Checked on every request: TrueForge may have stopped or a setting changed since activation.
     ensureReady: runSetup,
     onChange: () => panel.refresh(),
+    // By the resolved target, not the raw name: the model may reach it through call_tool.
+    reviewApproval: (approval, signal) => (approval.call.name === APPLY_TOOL ? flow.requestReview(approval, signal) : undefined),
+    discardStaged: () => flow.discard(),
     onEvent: (event) => {
       if (event.type !== 'model.message.delta') {
         output.appendLine(`[event] ${event.type}${'threadId' in event && event.threadId ? ` thread=${event.threadId}` : ''}`);
       }
     },
   });
+
+  const undo = async (): Promise<void> => {
+    const result = await flow.undoLast();
+    if (result.ok) void vscode.window.showInformationMessage(result.message);
+    else void vscode.window.showWarningMessage(`ForgeLens: ${result.message}`);
+  };
 
   const getState = (): PanelState => ({
     view: controller.view,
@@ -146,7 +169,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const panel = new AgentPanel(context.extensionUri, {
     getState,
     onSend: (text) => void controller.send(text),
-    onStop: () => controller.stop(),
+    onStop: () => void controller.stop(),
     onDecide: (toolCallId, allow) => controller.decide(toolCallId, allow),
     onNewChat: () => controller.newChat(),
     onOpenSession: () => {
@@ -154,6 +177,9 @@ export function activate(context: vscode.ExtensionContext): void {
       if (url) void vscode.env.openExternal(vscode.Uri.parse(url));
     },
     onSetup: () => void vscode.commands.executeCommand('forgelens.setup'),
+    onReviewOpen: () => void vscode.commands.executeCommand('forgelens.review.open'),
+    onReviewApply: () => void vscode.commands.executeCommand('forgelens.review.apply'),
+    onUndo: () => void undo(),
   });
 
   context.subscriptions.push(
@@ -161,6 +187,8 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     panel,
+    review,
+    vscode.commands.registerCommand('forgelens.undo', undo),
     vscode.commands.registerCommand('forgelens.setup', async () => {
       try {
         const model = await runSetup();
@@ -169,13 +197,10 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showErrorMessage(`ForgeLens: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
-    vscode.commands.registerCommand('forgelens.stop', () => controller.stop()),
+    vscode.commands.registerCommand('forgelens.stop', () => void controller.stop()),
     vscode.commands.registerCommand('forgelens.newChat', () => controller.newChat()),
     // Used by the end-to-end test, and by anything else that wants to drive the panel.
     vscode.commands.registerCommand('forgelens.ask', (text: string) => controller.send(text)),
-    vscode.commands.registerCommand('forgelens.internal.state', getState),
-    vscode.commands.registerCommand('forgelens.internal.gatedToolCalls', () => [...e2eGatedToolCalls]),
-    vscode.commands.registerCommand('forgelens.internal.click', (selector: string) => panel.clickForTest(selector)),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('forgelens.panel')) panel.refresh();
       if (event.affectsConfiguration('forgelens.models') || event.affectsConfiguration('forgelens.trueforgeUrl')) {
@@ -191,31 +216,35 @@ export function activate(context: vscode.ExtensionContext): void {
           });
       }
     }),
-    new vscode.Disposable(() => {
-      // A turn keeps running on the server after the editor closes, spending quota, unless told to stop.
-      controller.stop();
-      void mcp?.close();
-    }),
+    new vscode.Disposable(() => void mcp?.close()),
   );
+
+  // Test hooks, only in the end-to-end test's window: they hand out the MCP token and replace the server.
+  if (process.env['FORGELENS_E2E'] === '1') {
+    context.subscriptions.push(
+      vscode.commands.registerCommand('forgelens.internal.state', getState),
+      vscode.commands.registerCommand('forgelens.internal.click', (selector: string) => panel.clickForTest(selector)),
+      vscode.commands.registerCommand('forgelens.internal.mcp', () => ({ url: mcp?.url, token: mcpToken })),
+      vscode.commands.registerCommand('forgelens.internal.hunks', () =>
+        flow.changeset.hunks.map((hunk) => ({ id: hunk.id, path: hunk.path, newStart: hunk.newStart, lines: hunk.lines, decision: flow.decisionOf(hunk.id) })),
+      ),
+      vscode.commands.registerCommand('forgelens.internal.useSessions', (next: TestSessions | undefined) => {
+        testSessions = next;
+      }),
+    );
+  }
+
+  stopOnClose = () => controller.stop();
 
   showStatus();
   // Failure here is normal when TrueForge is not started yet: the banner says what to do.
   void runSetup().catch(() => undefined);
 }
 
-function registerE2eGatedTool(server: McpServer): void {
-  server.registerTool(
-    'apply_changes',
-    {
-      description: 'Test stand-in: records that it ran and changes nothing.',
-      inputSchema: { summary: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false },
-    },
-    (args) => {
-      e2eGatedToolCalls.push(args.summary);
-      return { content: [{ type: 'text', text: `test tool ran: ${args.summary}` }] };
-    },
-  );
+/**
+ * A turn keeps running on the server after the editor closes, spending quota, unless told to stop. VS Code
+ * waits briefly for this promise, which a fire-and-forget request during dispose would not get.
+ */
+export function deactivate(): Promise<void> | undefined {
+  return stopOnClose?.();
 }
-
-export function deactivate(): void {}

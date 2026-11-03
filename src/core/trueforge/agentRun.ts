@@ -67,13 +67,16 @@ export class AgentRun {
     return outcome;
   }
 
-  /** Returns at once; the view shows "Stopping…" straight away and the stream then ends by itself. */
-  stop(): void {
-    if (this.stopController.signal.aborted) return;
+  /**
+   * The view shows "Stopping…" straight away and the stream then ends by itself. The promise settles once
+   * the server has been asked, so a closing editor can wait for that much.
+   */
+  stop(): Promise<void> {
+    if (this.stopController.signal.aborted) return Promise.resolve();
     this.stopController.abort();
     this.options.view.markStopping();
     this.options.onChange?.();
-    void this.runner.cancel();
+    return this.runner.cancel();
   }
 
   private async collectDecisions(

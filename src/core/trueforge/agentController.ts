@@ -123,13 +123,14 @@ export class AgentController {
     }
   }
 
-  stop(): void {
-    if (!this.busy) return;
+  /** Updates the view at once. The promise settles when the server has been told. */
+  stop(): Promise<void> {
+    if (!this.busy) return Promise.resolve();
     this.stopRequested = true;
     this.builder.markStopping();
     this.options.onChange();
     this.options.discardStaged?.();
-    this.run?.stop();
+    return this.run?.stop() ?? Promise.resolve();
   }
 
   decide(toolCallId: string, allow: boolean): void {

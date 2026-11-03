@@ -1,4 +1,4 @@
-import type { RunStatus, ThreadItem, ToolItem, ViewItem } from '../../core/trueforge/runView';
+import type { ReviewItem, RunStatus, ThreadItem, ToolItem, ViewItem } from '../../core/trueforge/runView';
 import type { PanelState, ToExtension, ToWebview } from '../protocol';
 import { renderMarkdown } from './markdown';
 
@@ -129,13 +129,62 @@ function renderTool(): Rendered {
       via.hidden = !item.viaCallTool;
       status.textContent = STATUS_LABEL[item.status];
       duration.textContent = formatDuration(item.durationMs);
-      const waiting = item.status === 'awaiting-approval';
+      // apply_changes is answered in the hunk review, not with a plain Allow or Deny.
+      const waiting = item.status === 'awaiting-approval' && item.name !== 'apply_changes';
+      if (item.status === 'awaiting-approval' && !waiting) status.textContent = 'waiting for your review';
       approval.hidden = !waiting;
       approvalText.textContent = waiting
         ? `Allow ${item.name}${item.server ? ` on ${item.server}` : ''}?\n${JSON.stringify(item.args, null, 2)}`
         : '';
       body.hidden = item.result === undefined;
       body.textContent = item.result ?? '';
+    },
+  };
+}
+
+const REVIEW_PHASE_CLASS: Record<ReviewItem['phase'], string> = {
+  reviewing: 'waiting',
+  applying: 'waiting',
+  applied: 'good',
+  rejected: 'muted',
+  discarded: 'muted',
+  undone: 'muted',
+  failed: 'bad',
+};
+
+function renderReview(): Rendered {
+  const node = element('div', 'review');
+  const title = element('div', 'review-title');
+  const counts = element('div', 'review-counts');
+  const warning = element('div', 'review-warning');
+  const buttons = element('div', 'review-buttons');
+  const open = element('button', 'secondary review-open');
+  open.textContent = 'Open review';
+  const apply = element('button', 'primary review-apply');
+  apply.textContent = 'Apply decisions';
+  const undo = element('button', 'primary review-undo');
+  undo.textContent = 'Undo';
+  buttons.append(open, apply, undo);
+  node.append(title, counts, warning, buttons);
+  open.addEventListener('click', () => post({ type: 'review-open' }));
+  apply.addEventListener('click', () => post({ type: 'review-apply' }));
+  undo.addEventListener('click', () => post({ type: 'undo' }));
+  return {
+    node,
+    signature: '',
+    update: (item) => {
+      if (item.kind !== 'review') return;
+      const reviewing = item.phase === 'reviewing';
+      node.className = `review ${REVIEW_PHASE_CLASS[item.phase]}`;
+      title.textContent = item.text;
+      counts.hidden = !reviewing;
+      counts.textContent = `${item.accepted} accepted, ${item.rejected} rejected, ${item.pending} undecided`;
+      warning.hidden = !item.warning;
+      warning.textContent = item.warning ?? '';
+      open.hidden = !reviewing;
+      apply.hidden = !reviewing;
+      undo.hidden = !item.canUndo;
+      buttons.hidden = !reviewing && !item.canUndo;
     },
   };
 }
@@ -177,7 +226,9 @@ function renderItems(items: readonly ViewItem[], container: HTMLElement): void {
             ? renderText()
             : item.kind === 'tool'
               ? renderTool()
-              : renderThread();
+              : item.kind === 'review'
+                ? renderReview()
+                : renderThread();
       rendered.set(item.id, entry);
     }
     const signature = shallowSignature(item);

@@ -209,6 +209,52 @@ body.large-text {
   gap: 0.4rem;
 }
 
+.review {
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-left-width: 3px;
+  border-radius: 0.3rem;
+  background: var(--vscode-editorWidget-background);
+}
+
+.review.waiting {
+  border-left-color: var(--vscode-inputValidation-warningBorder);
+}
+
+.review.good {
+  border-left-color: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.review.bad {
+  border-left-color: var(--vscode-errorForeground);
+}
+
+.review-title {
+  font-weight: 600;
+}
+
+.review-counts {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.review-warning {
+  margin-top: 0.3rem;
+  padding: 0.3rem 0.4rem;
+  background: var(--vscode-inputValidation-warningBackground);
+  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  border-radius: 0.2rem;
+  overflow-wrap: anywhere;
+}
+
+.review-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+
 .thread {
   margin: 0 0 0.5rem;
   padding-left: 0.5rem;

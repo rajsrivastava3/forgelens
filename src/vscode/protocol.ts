@@ -21,4 +21,7 @@ export type ToExtension =
   | { type: 'new-chat' }
   | { type: 'open-session' }
   | { type: 'setup' }
+  | { type: 'review-open' }
+  | { type: 'review-apply' }
+  | { type: 'undo' }
   | { type: 'probe-result'; clicked: boolean; reactionMs: number; statusText: string };
