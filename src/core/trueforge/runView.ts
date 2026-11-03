@@ -1,4 +1,5 @@
 import type { TrueForgeApi } from '@truefoundry/trueforge-sdk';
+import type { ReviewCard } from '../changeset/reviewFlow';
 import { resolveToolCall, shortArgs } from './toolCalls';
 import { messageText, type TurnEvent, type TurnOutcome } from './turnRunner';
 
@@ -40,7 +41,11 @@ export interface ThreadItem {
   items: ViewItem[];
 }
 
-export type ViewItem = ToolItem | TextItem | UserItem | ThreadItem;
+export interface ReviewItem extends ReviewCard {
+  kind: 'review';
+}
+
+export type ViewItem = ToolItem | TextItem | UserItem | ThreadItem | ReviewItem;
 
 export interface RunView {
   status: RunStatus;
@@ -53,6 +58,7 @@ export interface RunView {
 }
 
 const MAX_RESULT_CHARS = 4_000;
+const WAITING_TEXT = 'Waiting for the model…';
 
 function isoMs(value: string | undefined): number | undefined {
   const ms = value ? Date.parse(value) : Number.NaN;
@@ -74,7 +80,12 @@ export class RunViewBuilder {
   private readonly toolById = new Map<string, ToolItem>();
   private readonly toolStartedAt = new Map<string, number>();
   private readonly textById = new Map<string, TextItem>();
+  private readonly reviewById = new Map<string, ReviewItem>();
   private turnCounter = 0;
+  /** Since when the model has been silent; undefined while it is producing output or a tool is running. */
+  private waitingSince: number | undefined;
+  /** Set when this request wrote to disk, because then "workspace unchanged" would be false. */
+  private appliedText: string | undefined;
 
   constructor(private readonly now: () => number = Date.now) {
     this.threadItems.set('main', this.view.items);
@@ -98,6 +109,9 @@ export class RunViewBuilder {
     this.toolById.clear();
     this.toolStartedAt.clear();
     this.textById.clear();
+    this.reviewById.clear();
+    this.waitingSince = undefined;
+    this.appliedText = undefined;
     this.view.sessionUrl = undefined;
     this.setStatus('idle', '');
     this.view.error = undefined;
@@ -107,7 +121,31 @@ export class RunViewBuilder {
     this.turnCounter += 1;
     this.view.items.push({ kind: 'user', id: `user-${this.turnCounter}`, text });
     this.view.error = undefined;
-    this.setStatus('running', 'Waiting for the model…');
+    this.appliedText = undefined;
+    this.waitingSince = this.now();
+    this.setStatus('running', WAITING_TEXT);
+  }
+
+  /** Called about once a second, so a slow model step shows a live count rather than looking hung. */
+  heartbeat(): void {
+    if (this.waitingSince === undefined || this.view.status !== 'running') return;
+    const seconds = Math.floor((this.now() - this.waitingSince) / 1000);
+    this.setStatus('running', seconds >= 1 ? `${WAITING_TEXT} ${seconds} s` : WAITING_TEXT);
+  }
+
+  /** Adds or updates the card for a review. */
+  review(card: ReviewCard): void {
+    let item = this.reviewById.get(card.id);
+    if (!item) {
+      item = { kind: 'review', ...card };
+      this.reviewById.set(card.id, item);
+      this.view.items.push(item);
+    } else {
+      Object.assign(item, card);
+    }
+    if (card.phase === 'reviewing') this.setStatus('awaiting-approval', 'Waiting for your review');
+    if (card.phase === 'applied' && card.accepted > 0) this.appliedText = card.text;
+    if (card.phase === 'undone' || card.phase === 'failed') this.appliedText = undefined;
   }
 
   markStopping(): void {
@@ -121,6 +159,7 @@ export class RunViewBuilder {
       tool.status = allow ? 'running' : 'denied';
       if (allow) this.toolStartedAt.set(toolCallId, this.now());
     }
+    this.waitingSince = allow ? undefined : this.now();
     this.setStatus('running', allow ? 'Running the approved tool…' : 'Telling the model you declined…');
   }
 
@@ -146,6 +185,7 @@ export class RunViewBuilder {
           const tool = this.toolById.get(ref.id);
           if (tool) tool.status = 'awaiting-approval';
         }
+        this.waitingSince = undefined;
         this.setStatus('awaiting-approval', 'Waiting for your approval');
         break;
       default:
@@ -154,6 +194,7 @@ export class RunViewBuilder {
   }
 
   applyOutcome(outcome: TurnOutcome): void {
+    this.waitingSince = undefined;
     switch (outcome.status) {
       case 'done':
         this.settleTools();
@@ -165,20 +206,28 @@ export class RunViewBuilder {
       case 'cancelled':
         this.settleTools();
         // Nothing can touch disk without a reviewed apply, so a stop never leaves partial edits.
-        this.setStatus('cancelled', 'Cancelled, workspace unchanged');
+        this.setStatus(
+          'cancelled',
+          this.appliedText ? `Cancelled. ${this.appliedText} before you stopped; Undo reverts them` : 'Cancelled, workspace unchanged',
+        );
         break;
       case 'error':
         this.settleTools();
         this.view.error = outcome.error.message;
-        this.setStatus('error', 'Failed, workspace unchanged');
+        this.setStatus('error', this.failureText());
         break;
     }
   }
 
   fail(message: string): void {
     this.settleTools();
+    this.waitingSince = undefined;
     this.view.error = message;
-    this.setStatus('error', 'Failed, workspace unchanged');
+    this.setStatus('error', this.failureText());
+  }
+
+  private failureText(): string {
+    return this.appliedText ? `Failed after this was applied: ${this.appliedText}` : 'Failed, workspace unchanged';
   }
 
   private isActive(): boolean {
@@ -216,7 +265,12 @@ export class RunViewBuilder {
       }
       item.text = text;
     }
-    if (this.view.status === 'running') this.setStatus('running', text ? 'Streaming…' : this.view.statusText);
+    const calls = (message.toolCalls ?? []).filter((call) => call.id);
+    // An empty shell announces a message but is not output, so the count keeps going until something real arrives.
+    if (text || calls.length > 0) this.waitingSince = undefined;
+    if (this.view.status === 'running' && this.waitingSince === undefined) {
+      this.setStatus('running', calls.length > 0 ? 'Running tools…' : 'Streaming…');
+    }
 
     for (const call of message.toolCalls ?? []) {
       if (!call.id) continue;
@@ -276,6 +330,12 @@ export class RunViewBuilder {
     const started = this.toolStartedAt.get(event.toolCallId);
     const ended = isoMs(event.createdAt) ?? this.now();
     tool.durationMs = started === undefined ? undefined : Math.max(0, ended - started);
+    // Once no tool is still running, the turn is waiting on the model again.
+    const toolRunning = [...this.toolById.values()].some((other) => other.status === 'running');
+    if (!toolRunning && this.view.status === 'running') {
+      this.waitingSince = this.now();
+      this.setStatus('running', WAITING_TEXT);
+    }
   }
 
   /** Cards still spinning when a turn ends will never hear back. */

@@ -3,6 +3,8 @@ import { TurnRunner, type PendingApproval, type SessionsApi, type TurnEvent, typ
 
 export type ApprovalDecision = { allow: true } | { allow: false; reason: string };
 
+export const STOPPED_DURING_APPROVAL = 'stopped-during-approval';
+
 export interface AgentRunOptions {
   sessions: SessionsApi;
   sessionId: string;
@@ -47,7 +49,8 @@ export class AgentRun {
       const decisions = await this.collectDecisions(outcome.approvals);
       // A stop during the pause needs no server call: the turn has ended and nothing is running.
       if (!decisions) {
-        outcome = { status: 'cancelled', reason: 'client-cancelled' };
+        // The session still holds an unanswered approval, so the controller starts a fresh one next time.
+        outcome = { status: 'cancelled', reason: STOPPED_DURING_APPROVAL };
         break;
       }
       outcome = await this.runner.runTurn(

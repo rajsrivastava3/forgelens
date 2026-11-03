@@ -1,4 +1,5 @@
-import { AgentRun, type ApprovalDecision } from './agentRun';
+import type { ReviewCard } from '../changeset/reviewFlow';
+import { AgentRun, STOPPED_DURING_APPROVAL, type ApprovalDecision } from './agentRun';
 import { describeTurnError, isConnectionFailure, trueForgeUnreachableMessage } from './errors';
 import { RunViewBuilder, type RunView } from './runView';
 import type { PendingApproval, SessionsApi, TurnEvent } from './turnRunner';
@@ -13,7 +14,13 @@ export interface AgentControllerOptions {
   ensureReady: () => Promise<string>;
   onChange: () => void;
   onEvent?: (event: TurnEvent) => void;
+  /** Takes over an approval, such as opening the hunk review for apply_changes. Undefined leaves it to decide(). */
+  reviewApproval?: (approval: PendingApproval, signal: AbortSignal) => Promise<ApprovalDecision> | undefined;
+  /** A stop, a failure or a new chat: whatever is staged will never be reviewed, so drop it. */
+  discardStaged?: () => void;
   now?: () => number;
+  /** Milliseconds between "Waiting for the model… 23 s" updates. */
+  heartbeatMs?: number;
 }
 
 interface WaitingApproval {
@@ -29,6 +36,7 @@ export class AgentController {
   private stopRequested = false;
   private busy = false;
   private readonly waiting = new Map<string, WaitingApproval>();
+  private heartbeat: ReturnType<typeof setInterval> | undefined;
 
   constructor(private readonly options: AgentControllerOptions) {
     this.builder = new RunViewBuilder(options.now);
@@ -47,6 +55,11 @@ export class AgentController {
     this.options.onChange();
   }
 
+  updateReview(card: ReviewCard): void {
+    this.builder.review(card);
+    this.options.onChange();
+  }
+
   /** Resolves when this request has fully ended. Never rejects; failures appear in the view. */
   async send(text: string): Promise<void> {
     const message = text.trim();
@@ -55,6 +68,10 @@ export class AgentController {
     this.stopRequested = false;
     this.builder.userMessage(message);
     this.options.onChange();
+    this.heartbeat = setInterval(() => {
+      this.builder.heartbeat();
+      this.options.onChange();
+    }, this.options.heartbeatMs ?? 1000);
 
     let model: string;
     try {
@@ -62,6 +79,7 @@ export class AgentController {
     } catch (error) {
       // Setup failures are already written for the user, including what to do next.
       this.builder.fail(error instanceof Error ? error.message : String(error));
+      clearInterval(this.heartbeat);
       this.busy = false;
       this.options.onChange();
       return;
@@ -89,11 +107,15 @@ export class AgentController {
         onChange: this.options.onChange,
         ...(this.options.onEvent ? { onEvent: this.options.onEvent } : {}),
       });
-      await this.run.send(message);
+      const outcome = await this.run.send(message);
+      if (outcome.status === 'cancelled' || outcome.status === 'error') this.options.discardStaged?.();
+      if (outcome.status === 'cancelled' && outcome.reason === STOPPED_DURING_APPROVAL) this.sessionId = undefined;
     } catch (error) {
+      this.options.discardStaged?.();
       const raw = error instanceof Error ? error.message : String(error);
       this.builder.fail(isConnectionFailure(raw) ? trueForgeUnreachableMessage(this.options.baseUrl()) : describeTurnError(raw).message);
     } finally {
+      clearInterval(this.heartbeat);
       this.run = undefined;
       this.busy = false;
       this.waiting.clear();
@@ -106,6 +128,7 @@ export class AgentController {
     this.stopRequested = true;
     this.builder.markStopping();
     this.options.onChange();
+    this.options.discardStaged?.();
     this.run?.stop();
   }
 
@@ -120,11 +143,14 @@ export class AgentController {
     if (this.busy) return;
     this.sessionId = undefined;
     this.sessionModel = undefined;
+    this.options.discardStaged?.();
     this.builder.reset();
     this.options.onChange();
   }
 
   private waitForDecision(approval: PendingApproval, signal: AbortSignal): Promise<ApprovalDecision> {
+    const reviewed = this.options.reviewApproval?.(approval, signal);
+    if (reviewed) return reviewed;
     return new Promise((resolve) => {
       this.waiting.set(approval.toolCallId, { resolve });
       signal.addEventListener('abort', () => this.waiting.delete(approval.toolCallId), { once: true });
