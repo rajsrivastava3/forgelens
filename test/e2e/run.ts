@@ -12,9 +12,13 @@ const workspace = process.env['FORGELENS_E2E_WORKSPACE'] ?? '.';
 const scenarios = (process.env['FORGELENS_E2E_SCENARIOS'] ?? '').split(',');
 const shots = path.join(root, 'docs/screenshots');
 const results: Record<string, unknown> = {};
+const GAP_MS = Number(process.env['FORGELENS_E2E_GAP_S'] ?? 65) * 1000;
+const SCENARIO_LIMIT_MS = 150_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-const state = (): Thenable<PanelState> => vscode.commands.executeCommand<PanelState>('forgelens.internal.state');
+// A copy: the command hands back the live view, and these checks compare moments in time.
+const state = async (): Promise<PanelState> =>
+  structuredClone(await vscode.commands.executeCommand<PanelState>('forgelens.internal.state'));
 const click = (selector: string): Thenable<{ clicked: boolean; reactionMs: number; statusText: string }> =>
   vscode.commands.executeCommand('forgelens.internal.click', selector);
 
@@ -58,6 +62,10 @@ async function waitFor(what: string, test: () => Promise<boolean> | boolean, tim
   throw new Error(`Timed out waiting for ${what}`);
 }
 
+function check(condition: boolean, what: string): void {
+  if (!condition) throw new Error(`Check failed: ${what}`);
+}
+
 async function gitStatus(): Promise<string> {
   return (await exec('git', ['-C', workspace, 'status', '--porcelain'])).stdout.trim();
 }
@@ -87,7 +95,7 @@ async function scenarioAsk(): Promise<void> {
     if (!firstTool && toolsOf(view.items).length > 0) firstTool = Date.now() - asked;
     if (!midShot && (chars > 0 || toolsOf(view.items).some((tool) => tool.status === 'done'))) {
       midShot = true;
-      await shot('p1-1-streaming');
+      await shot('p1-1-first-tool-card');
     }
     await sleep(15);
   }
@@ -113,6 +121,40 @@ async function scenarioAsk(): Promise<void> {
     totalMs: Date.now() - asked,
     gitStatus: await gitStatus(),
   };
+  check(view.status === 'done', `the answer finished (${view.error ?? view.status})`);
+  check(toolsOf(view.items).some((tool) => tool.status === 'done' && !tool.system), 'a tool card finished');
+  check(lengths.length >= 3, 'the text grew in steps');
+  check((await gitStatus()) === '', 'the workspace is clean');
+}
+
+/** A long answer, so a screenshot can land while tokens are still arriving. */
+async function scenarioStream(): Promise<void> {
+  await newChat();
+  const running = vscode.commands.executeCommand(
+    'forgelens.ask',
+    'Without using any tools, write about 400 words on what debug mode in a web framework is for.',
+  );
+  let done = false;
+  void Promise.resolve(running).then(() => {
+    done = true;
+  });
+  let charsAtShot = 0;
+  while (!done) {
+    const { view } = await state();
+    const chars = textOf(view).length;
+    if (chars > 0 && !charsAtShot) {
+      charsAtShot = chars;
+      await shot('p1-1-streaming-text');
+      const later = await state();
+      results['stream'] = { charsWhenShotStarted: chars, charsAfterShot: textOf(later.view).length, stillStreaming: later.busy };
+      break;
+    }
+    await sleep(10);
+  }
+  await running;
+  const { view } = await state();
+  results['stream'] = { ...(results['stream'] as object), finalStatus: view.status, finalChars: textOf(view).length, error: view.error };
+  check(view.status === 'done', `the long answer finished (${view.error ?? view.status})`);
 }
 
 async function scenarioStop(): Promise<void> {
@@ -137,7 +179,7 @@ async function scenarioStop(): Promise<void> {
   const pressed = Date.now();
   const probe = await click('#stop');
   const roundTripMs = Date.now() - pressed;
-  await shot('p1-4-stopping');
+  // No screenshot here: cancelling finishes before one can be taken. pageStatusText records it instead.
   let cancelledAfterMs: number | undefined;
   await Promise.race([
     Promise.resolve(running).then(() => {
@@ -164,6 +206,12 @@ async function scenarioStop(): Promise<void> {
     sessionUrl: view.sessionUrl,
     gitStatus: await gitStatus(),
   };
+  check(before.view.status === 'running', `the agent was running when stopped (${before.view.error ?? before.view.status})`);
+  check(probe.clicked, 'the Stop button was visible and clicked');
+  check(probe.reactionMs < 100, 'the page reacted within 100 ms');
+  check(probe.statusText === 'Stopping…', 'the page said Stopping');
+  check(view.status === 'cancelled' && !busy, 'the run ended cancelled');
+  check((await gitStatus()) === '', 'the workspace is clean');
 }
 
 async function runApproval(decision: 'allow' | 'deny', shotName: string): Promise<Record<string, unknown>> {
@@ -193,6 +241,10 @@ async function runApproval(decision: 'allow' | 'deny', shotName: string): Promis
   await Promise.race([running, sleep(60_000)]);
   const after = await state();
   const calls = await vscode.commands.executeCommand<string[]>('forgelens.internal.gatedToolCalls');
+  check(paused.view.status === 'awaiting-approval', `the run paused for approval (${paused.view.error ?? paused.view.status})`);
+  check(ranBeforeDecision === 0, 'the tool did not run before the decision');
+  check(probe.clicked, 'the decision button was visible and clicked');
+  check(calls.slice(before.length).filter((summary) => summary === marker).length === (decision === 'allow' ? 1 : 0), 'the tool ran only if allowed');
   return {
     pausedStatus: paused.view.status,
     error: paused.view.error ?? after.view.error,
@@ -211,9 +263,28 @@ async function runApproval(decision: 'allow' | 'deny', shotName: string): Promis
 async function scenarioApproval(): Promise<void> {
   const allow = await runApproval('allow', 'p1-6-approval-card');
   await shot('p1-7-approval-allowed');
+  await sleep(GAP_MS);
   const deny = await runApproval('deny', 'p1-8-approval-before-deny');
   await shot('p1-9-approval-denied');
   results['approval'] = { allow, deny, gitStatus: await gitStatus() };
+  check((await gitStatus()) === '', 'the workspace is clean');
+}
+
+/** Closes the window mid-run. launch.mjs then asks TrueForge whether the turn was stopped. */
+async function scenarioClose(): Promise<void> {
+  await newChat();
+  void vscode.commands.executeCommand(
+    'forgelens.ask',
+    'Read every Python file under src/flask one at a time, then write a detailed summary of each file.',
+  );
+  await waitFor('agent activity', async () => {
+    const { view } = await state();
+    return toolsOf(view.items).length > 0 || view.status === 'error';
+  }, 60_000);
+  const { view } = await state();
+  writeFileSync(path.join(root, 'out/e2e-close.json'), JSON.stringify({ status: view.status, sessionUrl: view.sessionUrl, error: view.error }));
+  await vscode.commands.executeCommand('workbench.action.closeWindow');
+  await sleep(10_000); // The window is closing, and this host goes with it.
 }
 
 async function scenarioOffline(): Promise<void> {
@@ -229,6 +300,7 @@ async function scenarioOffline(): Promise<void> {
   await settings.update('trueforgeUrl', undefined, vscode.ConfigurationTarget.Global);
   await waitFor('reconnecting', async () => (await state()).banner === undefined, 15_000);
   results['offlineRecovered'] = true;
+  check(view.status === 'error' && (view.error ?? '').includes('TrueForge is not running'), 'the clear message appeared');
 }
 
 export async function run(): Promise<void> {
@@ -245,20 +317,31 @@ export async function run(): Promise<void> {
 
     const table: Record<string, () => Promise<void>> = {
       ask: scenarioAsk,
+      stream: scenarioStream,
       stop: scenarioStop,
       approval: scenarioApproval,
       offline: scenarioOffline,
+      close: scenarioClose,
     };
     for (const name of scenarios) {
       const scenario = table[name];
       if (!scenario) continue;
       log(`scenario ${name}`);
       try {
-        await scenario();
+        // A slow provider must show up as a failure, not as a test that never ends.
+        await Promise.race([
+          scenario(),
+          sleep(SCENARIO_LIMIT_MS).then(() => {
+            throw new Error(`no result after ${SCENARIO_LIMIT_MS / 1000} s`);
+          }),
+        ]);
       } catch (error) {
+        await vscode.commands.executeCommand('forgelens.stop');
         failures.push(`${name}: ${String(error)}`);
         await shot(`failed-${name}`);
       }
+      // Free-tier models allow few requests per minute, so live scenarios need room between them.
+      if (name !== 'offline' && name !== scenarios.at(-1)) await sleep(GAP_MS);
     }
   } finally {
     results['failures'] = failures;

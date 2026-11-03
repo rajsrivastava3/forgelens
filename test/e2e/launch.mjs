@@ -38,7 +38,7 @@ const env = {
   FORGELENS_E2E_GATED_TOOL: '1',
   FORGELENS_E2E_ROOT: root,
   FORGELENS_E2E_WORKSPACE: workspace,
-  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'ask,stop,approval,offline',
+  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'ask,stream,stop,approval,offline',
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
