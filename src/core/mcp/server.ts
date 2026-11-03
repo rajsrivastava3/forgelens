@@ -4,17 +4,20 @@ import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import type { EditorPort } from '../tools/editorPort';
+import { StagedEditorPort } from '../changeset/changeset';
+import { APPLY_TOOL, ReviewFlow } from '../changeset/reviewFlow';
+import type { WritablePort } from '../tools/editorPort';
 import { readFileTool } from '../tools/readFile';
 import { retrieveContextTool } from '../tools/retrieveContext';
 import { searchCodeTool } from '../tools/searchCode';
 import { findReferencesTool, findSymbolTool } from '../tools/symbols';
-import { getDiagnosticsTool, getStagedChangesTool, listDirTool, repoMapTool } from '../tools/workspaceViews';
+import { getStagedChangesTool, stageCreateFileTool, stageDeleteFileTool, stageEditTool } from '../tools/stageTools';
+import { getDiagnosticsTool, listDirTool, repoMapTool } from '../tools/workspaceViews';
 
 export const MCP_TOKEN_HEADER = 'x-forgelens-token';
 export const MCP_SERVER_NAME = 'forgelens-editor';
 export const MCP_SERVER_DESCRIPTION =
-  'ForgeLens editor tools for the open VS Code workspace: read, search and navigate code.';
+  'ForgeLens editor tools for the open VS Code workspace: read, search and navigate code, stage edits, and apply what the user approves.';
 
 export interface ToolCallRecord {
   tool: string;
@@ -24,7 +27,9 @@ export interface ToolCallRecord {
 }
 
 export interface EditorMcpServerOptions {
-  port: EditorPort;
+  port: WritablePort;
+  /** Holds staged edits and reviews. Created here when not given, for headless use. */
+  flow?: ReviewFlow;
   token: string;
   /** TCP port on 127.0.0.1. 0 picks a free port. */
   listenPort?: number;
@@ -39,10 +44,15 @@ export interface RunningEditorMcpServer {
 }
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false } as const;
+/** Staging changes nothing on disk, but it is not read-only: it changes what apply_changes will propose. */
+const STAGING = { readOnlyHint: false, destructiveHint: false } as const;
 
-function buildMcpServer(options: EditorMcpServerOptions): McpServer {
+function buildMcpServer(options: EditorMcpServerOptions, flow: ReviewFlow): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.0.1' });
-  const { port } = options;
+  // Every read tool sees staged content, so the agent always reads its own edits back.
+  const port = new StagedEditorPort(options.port, flow.changeset);
+  const { changeset } = flow;
+  const root = (): string => options.port.workspaceRoot;
 
   const run = async (tool: string, args: unknown, execute: () => Promise<string>) => {
     const at = new Date().toISOString();
@@ -128,7 +138,7 @@ function buildMcpServer(options: EditorMcpServerOptions): McpServer {
   server.registerTool(
     'read_file',
     {
-      description: 'Read a text file from the workspace. Returns numbered lines; says when the result was truncated.',
+      description: 'Read a text file from the workspace, including any edits you have staged. Returns numbered lines; says when the result was truncated.',
       inputSchema: {
         path: z.string().describe('Path relative to the workspace root'),
         start_line: z.number().int().positive().optional().describe('First line, 1-based'),
@@ -169,7 +179,57 @@ function buildMcpServer(options: EditorMcpServerOptions): McpServer {
       inputSchema: {},
       annotations: READ_ONLY,
     },
-    () => run('get_staged_changes', {}, () => getStagedChangesTool()),
+    () => run('get_staged_changes', {}, () => getStagedChangesTool(changeset)),
+  );
+
+  server.registerTool(
+    'stage_edit',
+    {
+      description:
+        'Propose search/replace edits to one file. Writes nothing to disk. Each old_text must match one place: exact text first, then ignoring whitespace differences. If it fails, the error lists the nearest places. All edits in a call land together or not at all. Returns the resulting diff.',
+      inputSchema: {
+        path: z.string().describe('Path relative to the workspace root'),
+        edits: z
+          .array(z.object({ old_text: z.string().describe('Text to replace, with enough lines to be unique'), new_text: z.string().describe('Replacement text') }))
+          .min(1),
+      },
+      annotations: STAGING,
+    },
+    (args) => run('stage_edit', args, () => stageEditTool(changeset, root(), args)),
+  );
+
+  server.registerTool(
+    'stage_create_file',
+    {
+      description: 'Propose a new file. Writes nothing to disk.',
+      inputSchema: {
+        path: z.string().describe('Path relative to the workspace root'),
+        content: z.string().describe('The whole file'),
+      },
+      annotations: STAGING,
+    },
+    (args) => run('stage_create_file', args, () => stageCreateFileTool(changeset, root(), args)),
+  );
+
+  server.registerTool(
+    'stage_delete_file',
+    {
+      description: 'Propose deleting a file. Writes nothing to disk.',
+      inputSchema: { path: z.string().describe('Path relative to the workspace root') },
+      annotations: STAGING,
+    },
+    (args) => run('stage_delete_file', args, () => stageDeleteFileTool(changeset, root(), args)),
+  );
+
+  server.registerTool(
+    APPLY_TOOL,
+    {
+      description:
+        'Ask the user to review everything staged, hunk by hunk. This is the only way anything reaches disk. Call it once, after all edits are staged. The result lists exactly which hunks landed and which the user rejected.',
+      inputSchema: { summary: z.string().describe('One sentence on what this change does, for the user') },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    (args) => run(APPLY_TOOL, args, () => flow.applyApproved(args.summary)),
   );
 
   options.configure?.(server);
@@ -197,6 +257,7 @@ function respondJson(res: ServerResponse, status: number, message: string): void
 /** Stateless: each request gets its own server and transport, so nothing depends on MCP session state. */
 async function handleRequest(
   options: EditorMcpServerOptions,
+  flow: ReviewFlow,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -212,7 +273,7 @@ async function handleRequest(
     return respondJson(res, 405, 'method not allowed');
   }
 
-  const server = buildMcpServer(options);
+  const server = buildMcpServer(options, flow);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -228,8 +289,10 @@ async function handleRequest(
 export function startEditorMcpServer(
   options: EditorMcpServerOptions,
 ): Promise<RunningEditorMcpServer> {
+  // One per server, not per request: staged edits must outlive the request that made them.
+  const flow = options.flow ?? new ReviewFlow(options.port);
   const http: Server = createServer((req, res) => {
-    handleRequest(options, req, res).catch((error: unknown) => {
+    handleRequest(options, flow, req, res).catch((error: unknown) => {
       if (!res.headersSent) respondJson(res, 500, String(error));
       else res.end();
     });

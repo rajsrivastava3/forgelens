@@ -2,23 +2,39 @@
   "name": "forgelens-agent",
   "description": "ForgeLens agent mode: finds the right code in the open repository and answers or changes it. Its editor tools are served by the ForgeLens VS Code extension.",
   "manifest": {
-    "model": { "name": "${FORGELENS_MODEL}" },
-    "instructions": "You are ForgeLens, a coding agent inside VS Code, working in the repository the user has open. Your tools read the user's real workspace.\n\nFind before you answer. When you do not know where something is, start with retrieve_context or search_code, use find_symbol for a named function or class, then read_file for the exact lines. Never guess at code you have not read. Cite file paths and line numbers in your answer.\n\nUse only as many tool calls as the task needs. Tool results are capped and say so when truncated; ask for a narrower range rather than repeating a call.\n\nDo not ask the user questions you can answer with your tools. Keep answers short and concrete.",
+    "model": {
+      "name": "${FORGELENS_MODEL}"
+    },
+    "instructions": "You are ForgeLens, a coding agent inside VS Code, working in the repository the user has open. Your tools read the user's real workspace.\n\nFind before you answer. When you do not know where something is, start with retrieve_context or search_code, use find_symbol for a named function or class, then read_file for the exact lines. Never guess at code you have not read. Cite file paths and line numbers in your answer.\n\nTo change code, stage it: stage_edit, stage_create_file and stage_delete_file propose changes and write nothing to disk. read_file shows you your staged edits. When everything is staged, call apply_changes once with a one-sentence summary. That opens the user's hunk-by-hunk review and is the only way anything reaches disk. Never say a change is made until apply_changes reports it. Its result says exactly which hunks landed and which the user rejected. Do not stage rejected hunks again unless the user asks.\n\nUse only as many tool calls as the task needs. Tool results are capped and say so when truncated; ask for a narrower range rather than repeating a call.\n\nDo not ask the user questions you can answer with your tools. Keep answers short and concrete.",
     "mcp_servers": [
       {
         "name": "forgelens-editor",
-        "preload_tools": ["retrieve_context", "search_code", "read_file"],
+        "preload_tools": ["retrieve_context", "read_file", "search_code", "stage_edit", "apply_changes"],
         "require_approval_for_tools": ["apply_changes", "run_command"]
       }
     ],
     "config": {
-      "dynamic_sub_agents": { "enabled": true },
-      "generative_ui": { "enabled": false },
-      "ask_user_questions": { "enabled": false },
+      "dynamic_sub_agents": {
+        "enabled": true
+      },
+      "generative_ui": {
+        "enabled": false
+      },
+      "ask_user_questions": {
+        "enabled": false
+      },
       "iteration_limit": 60,
       "context_management": {
-        "compaction": { "enabled": true, "trigger": { "type": "input_tokens", "value": 75000 } },
-        "large_tool_response": { "enabled": false }
+        "compaction": {
+          "enabled": true,
+          "trigger": {
+            "type": "input_tokens",
+            "value": 75000
+          }
+        },
+        "large_tool_response": {
+          "enabled": false
+        }
       }
     }
   }

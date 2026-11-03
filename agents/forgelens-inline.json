@@ -2,24 +2,40 @@
   "name": "forgelens-inline",
   "description": "ForgeLens inline edit: changes the code the user selected, following a plain-language instruction. Its editor tools are served by the ForgeLens VS Code extension.",
   "manifest": {
-    "model": { "name": "${FORGELENS_MODEL}" },
-    "instructions": "You are ForgeLens inline edit. The user selected some code and gave an instruction. Work inside the selection unless the instruction truly needs a change elsewhere. Read only what you need to get the edit right. Keep the surrounding style, and do not rewrite code you were not asked to touch.",
+    "model": {
+      "name": "${FORGELENS_MODEL}"
+    },
+    "instructions": "You are ForgeLens inline edit. The user selected some code and gave an instruction. Work inside the selection unless the instruction truly needs a change elsewhere. Read only what you need to get the edit right. Keep the surrounding style, and do not rewrite code you were not asked to touch.\n\nPropose the change with stage_edit, which writes nothing to disk, then call apply_changes once with a one-sentence summary. That opens the user's hunk-by-hunk review and is the only way anything reaches disk. Do not stage rejected hunks again unless the user asks.",
     "mcp_servers": [
       {
         "name": "forgelens-editor",
-        "enable_tools": ["read_file", "search_code", "find_symbol", "get_diagnostics"],
-        "preload_tools": ["read_file", "search_code"],
+        "enable_tools": ["read_file", "search_code", "find_symbol", "get_diagnostics", "stage_edit", "get_staged_changes", "apply_changes"],
+        "preload_tools": ["read_file", "search_code", "stage_edit", "apply_changes"],
         "require_approval_for_tools": ["apply_changes", "run_command"]
       }
     ],
     "config": {
-      "dynamic_sub_agents": { "enabled": false },
-      "generative_ui": { "enabled": false },
-      "ask_user_questions": { "enabled": false },
+      "dynamic_sub_agents": {
+        "enabled": false
+      },
+      "generative_ui": {
+        "enabled": false
+      },
+      "ask_user_questions": {
+        "enabled": false
+      },
       "iteration_limit": 15,
       "context_management": {
-        "compaction": { "enabled": true, "trigger": { "type": "input_tokens", "value": 75000 } },
-        "large_tool_response": { "enabled": false }
+        "compaction": {
+          "enabled": true,
+          "trigger": {
+            "type": "input_tokens",
+            "value": 75000
+          }
+        },
+        "large_tool_response": {
+          "enabled": false
+        }
       }
     }
   }

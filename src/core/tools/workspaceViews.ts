@@ -89,8 +89,3 @@ export async function getDiagnosticsTool(
     .join('\n');
   return capText(body, 'Ask for one file.');
 }
-
-/** The changeset arrives with the staging tools; until then nothing can be staged. */
-export function getStagedChangesTool(): Promise<string> {
-  return Promise.resolve('No staged changes.');
-}

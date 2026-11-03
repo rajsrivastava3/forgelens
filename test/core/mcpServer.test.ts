@@ -21,6 +21,9 @@ beforeAll(async () => {
         p === 'hello.py' ? Promise.resolve('print("hi")\n') : Promise.reject(new Error('missing')),
       listFiles: () => Promise.resolve(['hello.py']),
       getDiagnostics: () => Promise.resolve([]),
+      readDiskBytes: () => Promise.resolve(undefined),
+      hasUnsavedChanges: () => false,
+      writeFiles: () => Promise.resolve(),
     },
     onToolCall: (r) => calls.push(r),
     configure: (mcp) => {
@@ -77,7 +80,7 @@ describe('editor MCP server', () => {
     expect(res.status).toBe(405);
   });
 
-  it('lists every read-only tool, annotated, plus configured tools', async () => {
+  it('lists every tool, annotated, plus configured tools', async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual([
@@ -90,11 +93,25 @@ describe('editor MCP server', () => {
       'list_dir',
       'get_diagnostics',
       'get_staged_changes',
+      'stage_edit',
+      'stage_create_file',
+      'stage_delete_file',
+      'apply_changes',
       'extra_tool',
     ]);
+    const writers = ['stage_edit', 'stage_create_file', 'stage_delete_file', 'apply_changes'];
     for (const tool of tools.filter((t) => t.name !== 'extra_tool')) {
-      expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
+      expect(tool.annotations?.readOnlyHint, tool.name).toBe(!writers.includes(tool.name));
     }
+    expect(tools.find((t) => t.name === 'apply_changes')?.annotations?.destructiveHint).toBe(true);
+    await client.close();
+  });
+
+  it('apply_changes writes nothing without a reviewed change', async () => {
+    const client = await connect();
+    const result = await client.callTool({ name: 'apply_changes', arguments: { summary: 'not reviewed' } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('Nothing is staged');
     await client.close();
   });
 
