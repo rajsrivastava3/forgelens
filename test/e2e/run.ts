@@ -862,15 +862,18 @@ async function verifyTaskA(): Promise<{ passed: boolean; failures: string[]; val
 async function showVerification(name: string): Promise<void> {
   const terminal = vscode.window.createTerminal({ name: 'Task A check', shellPath: GIT_BASH, cwd: workspace, env: { PATH: VENV_SCRIPTS + path.delimiter + (process.env['PATH'] ?? ''), PYTHONPATH: 'src', PYTHONDONTWRITEBYTECODE: '1' } });
   terminal.show();
+  await vscode.commands.executeCommand('workbench.action.toggleMaximizedPanel');
   await sleep(4000);
-  terminal.sendText('FLASK_DEBUG=off python -c "' + VERIFY_PY + '"');
-  await sleep(3500);
   terminal.sendText('for v in OFF n N 0 false no 1 true yes; do echo "$v: $(FLASK_DEBUG=$v python -c "' + VERIFY_PY + '")"; done');
   await sleep(9000);
   terminal.sendText('python -m pytest tests/test_helpers.py -q -p no:cacheprovider 2>&1 | tail -1');
-  await sleep(6000);
+  await sleep(5000);
+  // Last, so the exact command from the task is the line on screen.
+  terminal.sendText('FLASK_DEBUG=off python -c "' + VERIFY_PY + '"');
+  await sleep(3000);
   await shot(name);
   terminal.dispose();
+  await vscode.commands.executeCommand('workbench.action.toggleMaximizedPanel');
   await vscode.commands.executeCommand('workbench.action.closePanel');
 }
 
@@ -1041,8 +1044,8 @@ async function totalModelMessages(sessionUrl: string | undefined): Promise<numbe
   if (!id) return undefined;
   const response = await fetch('http://localhost:8790/api/v1/sessions/' + id + '/events?limit=100');
   if (!response.ok) return undefined;
-  const { data } = (await response.json()) as { data: { type: string }[] };
-  return data.filter((event) => event.type === 'model.message').length;
+  const { data } = (await response.json()) as { data: { event: { type: string } }[] };
+  return data.filter((item) => item.event.type === 'model.message').length;
 }
 
 /** The exact Task A on a real model, three times, rotating on a quota error. */
