@@ -96,6 +96,10 @@
         "command": "forgelens.review.open",
         "title": "Open review",
         "category": "ForgeLens"
+      },
+      {
+        "command": "forgelens.editSelection",
+        "title": "ForgeLens: Edit selection"
       }
     ],
     "keybindings": [
@@ -103,6 +107,17 @@
         "command": "forgelens.stop",
         "key": "escape",
         "when": "focusedView == forgelens.panel"
+      },
+      {
+        "command": "forgelens.editSelection",
+        "key": "ctrl+alt+k",
+        "mac": "cmd+alt+k",
+        "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "forgelens.stop",
+        "key": "escape",
+        "when": "forgelens.running && editorTextFocus && !suggestWidgetVisible && !findWidgetVisible && !renameInputVisible"
       }
     ],
     "configuration": {
@@ -204,6 +219,13 @@
         {
           "command": "forgelens.review.open",
           "when": "forgelens.reviewing"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "forgelens.editSelection",
+          "when": "editorTextFocus && !editorReadonly && resourceScheme == file",
+          "group": "1_modification@1"
         }
       ]
     },

@@ -9,6 +9,7 @@ import { AgentController } from '../core/trueforge/agentController';
 import { setUpTrueForge, type AgentDefinition } from '../core/trueforge/setup';
 import type { SessionsApi } from '../core/trueforge/turnRunner';
 import { AgentPanel } from './agentPanel';
+import { InlineEdit } from './inlineEdit';
 import type { PanelState } from './protocol';
 import { ReviewController } from './reviewController';
 import { VscodeEditorPort } from './vscodeEditorPort';
@@ -23,6 +24,7 @@ interface TestSessions {
   sessionId: string;
 }
 
+const EDITOR_UNDO_SETTLE_MS = 150;
 let stopOnClose: (() => Promise<void>) | undefined;
 
 function config(): vscode.WorkspaceConfiguration {
@@ -62,6 +64,8 @@ export function activate(context: vscode.ExtensionContext): void {
   let client: TrueForge | undefined;
   let clientUrl: string | undefined;
   let testSessions: TestSessions | undefined;
+  let wasBusy = false;
+  let editorUndoTimer: ReturnType<typeof setTimeout> | undefined;
 
   const sdk = (): TrueForge => {
     if (!client || clientUrl !== baseUrl()) {
@@ -139,12 +143,19 @@ export function activate(context: vscode.ExtensionContext): void {
     agentName: AGENT_NAME,
     baseUrl,
     sessions: () => testSessions?.api ?? sdk().sessions,
-    createSession: async () => testSessions?.sessionId ?? (await sdk().sessions.create({ agent: { name: AGENT_NAME } })).data.id,
+    createSession: async (agentName) => testSessions?.sessionId ?? (await sdk().sessions.create({ agent: { name: agentName } })).data.id,
     // Checked on every request: TrueForge may have stopped or a setting changed since activation.
     ensureReady: runSetup,
-    onChange: () => panel.refresh(),
+    onChange: () => {
+      panel.refresh();
+      inline.refresh();
+      if (controller.isBusy !== wasBusy) {
+        wasBusy = controller.isBusy;
+        void vscode.commands.executeCommand('setContext', 'forgelens.running', wasBusy);
+      }
+    },
     // By the resolved target, not the raw name: the model may reach it through call_tool.
-    reviewApproval: (approval, signal) => (approval.call.name === APPLY_TOOL ? flow.requestReview(approval, signal) : undefined),
+    reviewApproval: (approval, signal) => (approval.call.name === APPLY_TOOL ? flow.requestReview(signal) : undefined),
     discardStaged: () => flow.discard(),
     onEvent: (event) => {
       if (event.type !== 'model.message.delta') {
@@ -152,6 +163,8 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     },
   });
+
+  const inline = new InlineEdit({ controller, flow, port, log: (message) => output.appendLine(message) });
 
   const undo = async (): Promise<UndoResult> => {
     const result = await flow.undoLast();
@@ -189,6 +202,19 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     panel,
     review,
+    inline,
+    vscode.commands.registerCommand('forgelens.editSelection', () => inline.run()),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.reason !== vscode.TextDocumentChangeReason.Undo || event.document.uri.scheme !== 'file') return;
+      if (!flow.lastAppliedTouches(vscode.workspace.asRelativePath(event.document.uri, false).replace(/\\/g, '/'))) return;
+      // One Ctrl+Z changes several documents in a burst, so wait for it to end.
+      clearTimeout(editorUndoTimer);
+      editorUndoTimer = setTimeout(() => {
+        void flow.syncAfterEditorUndo().then((result) => {
+          if (result?.ok) void vscode.window.showInformationMessage(result.message);
+        });
+      }, EDITOR_UNDO_SETTLE_MS);
+    }),
     vscode.commands.registerCommand('forgelens.undo', undo),
     vscode.commands.registerCommand('forgelens.setup', async () => {
       try {
@@ -224,7 +250,9 @@ export function activate(context: vscode.ExtensionContext): void {
   if (process.env['FORGELENS_E2E'] === '1') {
     context.subscriptions.push(
       vscode.commands.registerCommand('forgelens.internal.state', getState),
+      vscode.commands.registerCommand('forgelens.internal.answerInput', (value: string) => inline.answerInputForTest(value)),
       vscode.commands.registerCommand('forgelens.internal.click', (selector: string) => panel.clickForTest(selector)),
+      vscode.commands.registerCommand('forgelens.internal.pressCtrlZ', () => panel.pressCtrlZForTest()),
       vscode.commands.registerCommand('forgelens.internal.mcp', () => ({ url: mcp?.url, token: mcpToken })),
       vscode.commands.registerCommand('forgelens.internal.hunks', () =>
         flow.changeset.hunks.map((hunk) => ({ id: hunk.id, path: hunk.path, newStart: hunk.newStart, lines: hunk.lines, decision: flow.decisionOf(hunk.id) })),
