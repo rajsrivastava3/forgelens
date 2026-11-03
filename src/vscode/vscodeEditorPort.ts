@@ -12,6 +12,10 @@ const SEVERITY: Record<vscode.DiagnosticSeverity, DiagnosticInfo['severity']> = 
   [vscode.DiagnosticSeverity.Hint]: 'hint',
 };
 
+const SAVE_ATTEMPTS = 3;
+const EDIT_ATTEMPTS = 5;
+const EDIT_RETRY_DELAY_MS = 150;
+
 function samePath(a: string, b: string): boolean {
   return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
@@ -93,26 +97,31 @@ export class VscodeEditorPort implements WritablePort {
     const targets = writes.map((write) => ({ ...write, uri: this.uriOf(write.path) }));
     const before = await Promise.all(targets.map((target) => this.readUri(target.uri)));
 
-    const edit = new vscode.WorkspaceEdit();
-    const documents: vscode.TextDocument[] = [];
-    for (const [index, target] of targets.entries()) {
-      if (target.bytes === undefined) {
-        edit.deleteFile(target.uri, { ignoreIfNotExists: true });
-      } else if (before[index] === undefined) {
-        edit.createFile(target.uri, { contents: target.bytes, overwrite: false });
-      } else {
-        const document = await vscode.workspace.openTextDocument(target.uri);
-        const change = minimalEdit(document, decodeForEditor(target.bytes));
-        if (change) {
-          edit.replace(target.uri, change.range, change.newText);
-          documents.push(document);
-        }
-      }
-    }
-
+    const edited: vscode.Uri[] = [];
     try {
-      if (!(await vscode.workspace.applyEdit(edit))) throw new Error('VS Code refused the edit.');
-      await Promise.all(documents.map((document) => document.save()));
+      // VS Code refuses an edit built against a document it is reloading, so build it afresh and try again.
+      for (let attempt = 1; ; attempt += 1) {
+        edited.length = 0;
+        const edit = new vscode.WorkspaceEdit();
+        for (const [index, target] of targets.entries()) {
+          if (target.bytes === undefined) {
+            edit.deleteFile(target.uri, { ignoreIfNotExists: true });
+          } else if (before[index] === undefined) {
+            edit.createFile(target.uri, { contents: target.bytes, overwrite: false });
+          } else {
+            const document = await vscode.workspace.openTextDocument(target.uri);
+            const change = minimalEdit(document, decodeForEditor(target.bytes));
+            if (change) {
+              edit.replace(target.uri, change.range, change.newText);
+              edited.push(target.uri);
+            }
+          }
+        }
+        if (await vscode.workspace.applyEdit(edit)) break;
+        if (attempt >= EDIT_ATTEMPTS) throw new Error('VS Code refused the edit.');
+        await new Promise((resolve) => setTimeout(resolve, EDIT_RETRY_DELAY_MS));
+      }
+      await Promise.all(edited.map((uri) => saveDocument(uri)));
       for (const target of targets) {
         if (target.bytes !== undefined && !bytesEqual(await this.readUri(target.uri), target.bytes)) {
           const { uri, bytes } = target;
@@ -153,6 +162,22 @@ export class VscodeEditorPort implements WritablePort {
     return vscode.workspace.textDocuments.find(
       (document) => document.uri.scheme === 'file' && samePath(document.uri.fsPath, absolute),
     );
+  }
+}
+
+/**
+ * Saves by uri, not by a held document: closing the last tab showing a file releases its document object,
+ * and save() on that throws "Document has been closed" even though the edit is still pending.
+ */
+async function saveDocument(uri: vscode.Uri): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    const document = await vscode.workspace.openTextDocument(uri);
+    try {
+      await document.save();
+      return;
+    } catch (error) {
+      if (attempt >= SAVE_ATTEMPTS || !document.isClosed) throw error;
+    }
   }
 }
 

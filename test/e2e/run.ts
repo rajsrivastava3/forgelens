@@ -549,9 +549,12 @@ async function scenarioCrlf(): Promise<void> {
     await running;
     const written = onDisk(file);
     check(written === text.replace('value_3 = 3', 'value_3 = 33'), 'only the approved change reached disk, with CRLF and trailing spaces kept');
-    await vscode.commands.executeCommand('forgelens.undo');
+    const undone = await vscode.commands.executeCommand<{ ok: boolean; message: string }>('forgelens.undo');
+    const atOnce = onDisk(file);
+    const firstDifference = [...text].findIndex((char, i) => atOnce[i] !== char);
+    check(atOnce === text, `undo restores the exact bytes: ${undone.message}; first difference at ${firstDifference}, ${JSON.stringify(atOnce.slice(Math.max(0, firstDifference - 8), firstDifference + 12))}`);
     await sleep(500);
-    check(onDisk(file) === text, 'undo restores the exact bytes');
+    check(onDisk(file) === text, 'the bytes stay restored');
     results['crlf'] = { keptCrlf: !/(?<!\r)\n/.test(written), keptTrailingSpaces: written.includes(' = 33   \r\n') };
   } finally {
     await settings.update('trimTrailingWhitespace', undefined, vscode.ConfigurationTarget.Global);

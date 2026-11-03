@@ -34,6 +34,7 @@ export class ReviewController
   private readonly disposables: vscode.Disposable[] = [];
   private readonly tree: vscode.TreeView<TreeNode>;
   private wasReviewing = false;
+  private tabsOpen = false;
   /** Paths with a diff tab, so a re-diff can refresh them and closing the review can find them. */
   private shownPaths = new Set<string>();
   /** Opening and closing tabs take time. In a queue, a fast Stop cannot leave a tab that opened after the close. */
@@ -75,8 +76,11 @@ export class ReviewController
     // Only during a review: afterwards there is no proposal, and the tab would flash an empty file before closing.
     if (reviewing) for (const shown of this.shownPaths) this.documentChanged.fire(proposedUri(shown));
 
-    if (reviewing && !this.wasReviewing) this.queueTabs(() => this.openAll());
-    if (!reviewing && this.wasReviewing) this.queueTabs(() => this.closeTabs());
+    // An approved change is still being written. Closing its diff now would release the document mid-save.
+    const tabsNeeded = reviewing || this.flow.isApprovedChangeWaiting;
+    if (reviewing && !this.wasReviewing && !this.tabsOpen) this.queueTabs(() => this.openAll());
+    if (!tabsNeeded && this.tabsOpen) this.queueTabs(() => this.closeTabs());
+    this.tabsOpen = tabsNeeded;
     this.wasReviewing = reviewing;
   }
 

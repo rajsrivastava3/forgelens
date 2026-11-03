@@ -3,7 +3,7 @@ import { TrueForge } from '@truefoundry/trueforge-sdk';
 import * as vscode from 'vscode';
 import agentDefinition from '../../agents/forgelens-agent.json';
 import inlineDefinition from '../../agents/forgelens-inline.json';
-import { APPLY_TOOL, ReviewFlow } from '../core/changeset/reviewFlow';
+import { APPLY_TOOL, ReviewFlow, type UndoResult } from '../core/changeset/reviewFlow';
 import { startEditorMcpServer, type RunningEditorMcpServer } from '../core/mcp/server';
 import { AgentController } from '../core/trueforge/agentController';
 import { setUpTrueForge, type AgentDefinition } from '../core/trueforge/setup';
@@ -153,10 +153,11 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
 
-  const undo = async (): Promise<void> => {
+  const undo = async (): Promise<UndoResult> => {
     const result = await flow.undoLast();
     if (result.ok) void vscode.window.showInformationMessage(result.message);
     else void vscode.window.showWarningMessage(`ForgeLens: ${result.message}`);
+    return result;
   };
 
   const getState = (): PanelState => ({
