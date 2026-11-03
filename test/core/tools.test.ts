@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { EditorPort } from '../../src/core/tools/editorPort';
-import { NodeEditorPort } from '../../src/core/tools/nodeEditorPort';
+import { NodeEditorPort, retryWhileLocked } from '../../src/core/tools/nodeEditorPort';
 import { capText, globToRegExp, MAX_TOOL_OUTPUT_CHARS } from '../../src/core/tools/output';
 import { retrieveContextTool } from '../../src/core/tools/retrieveContext';
 import { searchCodeTool } from '../../src/core/tools/searchCode';
@@ -215,5 +215,32 @@ describe.skipIf(!hasFlask)('on the real flask repo', () => {
     const out = await repoMapTool(flask, { budget_tokens: 1000 });
     expect(out).toMatch(/~\d+ of 1000 tokens/);
     expect(out.length).toBeLessThan(5000);
+  });
+});
+
+describe('retryWhileLocked', () => {
+  it('retries a brief Windows file lock, then succeeds', async () => {
+    let calls = 0;
+    const result = await retryWhileLocked(() => {
+      calls += 1;
+      return calls < 3 ? Promise.reject(new Error("EBUSY: resource busy or locked, open 'x'")) : Promise.resolve('done');
+    }, [1, 1, 1]);
+    expect(result).toBe('done');
+    expect(calls).toBe(3);
+  });
+
+  it('gives up on a lock that stays', async () => {
+    await expect(retryWhileLocked(() => Promise.reject(new Error('EBUSY')), [1, 1])).rejects.toThrow('EBUSY');
+  });
+
+  it('does not retry other errors', async () => {
+    let calls = 0;
+    await expect(
+      retryWhileLocked(() => {
+        calls += 1;
+        return Promise.reject(new Error('ENOENT'));
+      }, [1, 1]),
+    ).rejects.toThrow('ENOENT');
+    expect(calls).toBe(1);
   });
 });

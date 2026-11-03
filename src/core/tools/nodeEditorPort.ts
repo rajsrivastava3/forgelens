@@ -20,6 +20,22 @@ const SKIPPED_DIRECTORIES = new Set([
   'out',
 ]);
 
+const TRANSIENT_LOCK = /EBUSY|EPERM|EACCES|resource busy|being used by another process/i;
+const LOCK_RETRY_DELAYS_MS = [50, 100, 200, 400, 800, 1500];
+
+/** Windows: a virus scanner, indexer or git can hold a file for a moment. That should not fail a write. */
+export async function retryWhileLocked<T>(operation: () => PromiseLike<T>, delays: readonly number[] = LOCK_RETRY_DELAYS_MS): Promise<T> {
+  for (const delay of delays) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!TRANSIENT_LOCK.test(String(error))) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  return operation();
+}
+
 /** Rejects paths that resolve outside the workspace, including `..` segments and absolute paths. */
 export function resolveInsideWorkspace(workspaceRoot: string, relativePath: string): string {
   const root = path.resolve(workspaceRoot);
@@ -61,7 +77,7 @@ async function walk(root: string, relativeDir: string): Promise<string[]> {
 
 async function readIfPresent(absolute: string): Promise<Uint8Array | undefined> {
   try {
-    return await readFile(absolute);
+    return await retryWhileLocked(() => readFile(absolute));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
@@ -70,14 +86,14 @@ async function readIfPresent(absolute: string): Promise<Uint8Array | undefined> 
 
 async function replaceFile(absolute: string, bytes: Uint8Array | undefined): Promise<void> {
   if (bytes === undefined) {
-    await rm(absolute, { force: true });
+    await retryWhileLocked(() => rm(absolute, { force: true }));
     return;
   }
   await mkdir(path.dirname(absolute), { recursive: true });
   const temporary = `${absolute}.${randomBytes(4).toString('hex')}.forgelens-tmp`;
   await writeFile(temporary, bytes);
   try {
-    await rename(temporary, absolute);
+    await retryWhileLocked(() => rename(temporary, absolute));
   } catch (error) {
     await rm(temporary, { force: true });
     throw error;
