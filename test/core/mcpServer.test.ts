@@ -19,6 +19,8 @@ beforeAll(async () => {
       workspaceRoot: '/ws',
       readTextFile: (p) =>
         p === 'hello.py' ? Promise.resolve('print("hi")\n') : Promise.reject(new Error('missing')),
+      listFiles: () => Promise.resolve(['hello.py']),
+      getDiagnostics: () => Promise.resolve([]),
     },
     onToolCall: (r) => calls.push(r),
     configure: (mcp) => {
@@ -75,11 +77,24 @@ describe('editor MCP server', () => {
     expect(res.status).toBe(405);
   });
 
-  it('lists read_file with read-only annotations, plus configured tools', async () => {
+  it('lists every read-only tool, annotated, plus configured tools', async () => {
     const client = await connect();
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(['read_file', 'extra_tool']);
-    expect(tools[0]?.annotations?.readOnlyHint).toBe(true);
+    expect(tools.map((t) => t.name)).toEqual([
+      'retrieve_context',
+      'repo_map',
+      'search_code',
+      'find_symbol',
+      'find_references',
+      'read_file',
+      'list_dir',
+      'get_diagnostics',
+      'get_staged_changes',
+      'extra_tool',
+    ]);
+    for (const tool of tools.filter((t) => t.name !== 'extra_tool')) {
+      expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
+    }
     await client.close();
   });
 

@@ -6,8 +6,15 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import type { EditorPort } from '../tools/editorPort';
 import { readFileTool } from '../tools/readFile';
+import { retrieveContextTool } from '../tools/retrieveContext';
+import { searchCodeTool } from '../tools/searchCode';
+import { findReferencesTool, findSymbolTool } from '../tools/symbols';
+import { getDiagnosticsTool, getStagedChangesTool, listDirTool, repoMapTool } from '../tools/workspaceViews';
 
 export const MCP_TOKEN_HEADER = 'x-forgelens-token';
+export const MCP_SERVER_NAME = 'forgelens-editor';
+export const MCP_SERVER_DESCRIPTION =
+  'ForgeLens editor tools for the open VS Code workspace: read, search and navigate code.';
 
 export interface ToolCallRecord {
   tool: string;
@@ -31,33 +38,138 @@ export interface RunningEditorMcpServer {
   close(): Promise<void>;
 }
 
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false } as const;
+
 function buildMcpServer(options: EditorMcpServerOptions): McpServer {
-  const server = new McpServer({ name: 'forgelens-editor', version: '0.0.1' });
+  const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.0.1' });
+  const { port } = options;
+
+  const run = async (tool: string, args: unknown, execute: () => Promise<string>) => {
+    const at = new Date().toISOString();
+    try {
+      const text = await execute();
+      options.onToolCall?.({ tool, args, at, ok: true });
+      return { content: [{ type: 'text' as const, text }] };
+    } catch (error) {
+      options.onToolCall?.({ tool, args, at, ok: false });
+      const message = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: 'text' as const, text: `Error: ${message}` }], isError: true };
+    }
+  };
+
+  server.registerTool(
+    'retrieve_context',
+    {
+      description:
+        'Find the files most relevant to a question or task. Returns ranked files, each with the reason it was chosen, within a token budget. Start here when you do not know where the code is.',
+      inputSchema: {
+        query: z.string().describe('The task or question, in plain words and identifiers'),
+        budget_tokens: z.number().int().positive().optional().describe('Token budget for the result'),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) => run('retrieve_context', args, () => retrieveContextTool(port, args)),
+  );
+
+  server.registerTool(
+    'repo_map',
+    {
+      description: 'Outline the repository: file paths plus top-level signatures, within a token budget.',
+      inputSchema: {
+        path_prefix: z.string().optional().describe('Only include paths starting with this'),
+        budget_tokens: z.number().int().positive().optional().describe('Token budget for the result'),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) => run('repo_map', args, () => repoMapTool(port, args)),
+  );
+
+  server.registerTool(
+    'search_code',
+    {
+      description: 'Search workspace files for text or a regular expression. Returns path:line matches.',
+      inputSchema: {
+        query: z.string().describe('Text to find. All-lowercase matches any case'),
+        regex: z.boolean().optional().describe('Treat query as a regular expression'),
+        path_glob: z.string().optional().describe('Limit to matching paths, for example tests/**/*.py'),
+        max_results: z.number().int().positive().optional().describe('Result limit, at most 200'),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) => run('search_code', args, () => searchCodeTool(port, args)),
+  );
+
+  server.registerTool(
+    'find_symbol',
+    {
+      description: 'Find where a function, class, method or constant is defined. Returns file:line and signature.',
+      inputSchema: {
+        name: z.string().describe('The symbol name'),
+        kind: z.enum(['function', 'class', 'method', 'variable']).optional(),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) => run('find_symbol', args, () => findSymbolTool(port, args)),
+  );
+
+  server.registerTool(
+    'find_references',
+    {
+      description: 'Find every whole-word use of an identifier in the workspace.',
+      inputSchema: {
+        name: z.string().describe('The identifier'),
+        max_results: z.number().int().positive().optional().describe('Result limit, at most 200'),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) => run('find_references', args, () => findReferencesTool(port, args)),
+  );
 
   server.registerTool(
     'read_file',
     {
-      description:
-        'Read a text file from the workspace. Returns numbered lines; says when the result was truncated.',
+      description: 'Read a text file from the workspace. Returns numbered lines; says when the result was truncated.',
       inputSchema: {
         path: z.string().describe('Path relative to the workspace root'),
         start_line: z.number().int().positive().optional().describe('First line, 1-based'),
         end_line: z.number().int().positive().optional().describe('Last line, inclusive'),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      annotations: READ_ONLY,
     },
-    async (args) => {
-      const at = new Date().toISOString();
-      try {
-        const text = await readFileTool(options.port, args);
-        options.onToolCall?.({ tool: 'read_file', args, at, ok: true });
-        return { content: [{ type: 'text', text }] };
-      } catch (error) {
-        options.onToolCall?.({ tool: 'read_file', args, at, ok: false });
-        const message = error instanceof Error ? error.message : String(error);
-        return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
-      }
+    (args) => run('read_file', args, () => readFileTool(port, args)),
+  );
+
+  server.registerTool(
+    'list_dir',
+    {
+      description: 'List files and subdirectories, leaving out ignored files.',
+      inputSchema: {
+        path: z.string().optional().describe('Directory relative to the workspace root. Defaults to the root'),
+        depth: z.number().int().positive().optional().describe('Levels to expand. Defaults to 1'),
+      },
+      annotations: READ_ONLY,
     },
+    (args) => run('list_dir', args, () => listDirTool(port, args)),
+  );
+
+  server.registerTool(
+    'get_diagnostics',
+    {
+      description: 'Get errors and warnings the editor currently reports, for one file or the workspace.',
+      inputSchema: { path: z.string().optional().describe('Path relative to the workspace root') },
+      annotations: READ_ONLY,
+    },
+    (args) => run('get_diagnostics', args, () => getDiagnosticsTool(port, args)),
+  );
+
+  server.registerTool(
+    'get_staged_changes',
+    {
+      description: 'Summarise edits staged for review but not yet written to disk.',
+      inputSchema: {},
+      annotations: READ_ONLY,
+    },
+    () => run('get_staged_changes', {}, () => getStagedChangesTool()),
   );
 
   options.configure?.(server);
