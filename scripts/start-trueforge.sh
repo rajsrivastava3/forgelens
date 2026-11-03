@@ -3,4 +3,4 @@
 # SSRF guard blocks loopback URLs unless they are allowlisted.
 set -euo pipefail
 export OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","localhost"]'
-exec npx --yes @truefoundry/trueforge@latest "$@"
+exec npx --yes @truefoundry/trueforge@0.183.0 "$@"

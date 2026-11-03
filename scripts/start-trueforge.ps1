@@ -7,4 +7,4 @@ $env:OUTBOUND_URL_ALLOWED_HOSTS = '["127.0.0.1","localhost"]'
 $npx = if ($env:OS -eq 'Windows_NT') { 'npx.cmd' } else { 'npx' }
 
 # The quotes matter: an unquoted leading @ is PowerShell splatting.
-& $npx --yes "@truefoundry/trueforge@latest" @args
+& $npx --yes "@truefoundry/trueforge@0.183.0" @args
