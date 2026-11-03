@@ -459,6 +459,8 @@ async function main(): Promise<number> {
     if (out) await writeFile(out, json);
     return 0;
   } finally {
+    // The port closes with this script, so leave no registration pointing at it.
+    await client.settings.mcpServers.delete(MCP_SERVER_NAME).catch(() => undefined);
     await mcp.close();
   }
 }

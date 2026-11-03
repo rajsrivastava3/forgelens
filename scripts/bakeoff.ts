@@ -59,12 +59,10 @@ interface TurnOutcome {
 async function copyRepo(): Promise<string> {
   await mkdir(tmpRoot, { recursive: true });
   const dir = await mkdtemp(path.join(tmpRoot, 'bakeoff-'));
-  const archive = path.join(dir, '..', `${path.basename(dir)}.tar`);
+  const archive = path.join(dir, 'repo.tar');
   await exec('git', ['-C', repo, 'archive', '--format=tar', '-o', archive, 'HEAD']);
-  // --force-local stops GNU tar reading the drive colon in a Windows path as a remote host.
-  await exec('tar', ['--force-local', '-xf', archive, '-C', dir]).catch(() =>
-    exec('tar', ['-xf', archive, '-C', dir]),
-  );
+  // A relative name: GNU tar reads the drive colon in a Windows path as a remote host.
+  await exec('tar', ['-xf', 'repo.tar'], { cwd: dir });
   await rm(archive, { force: true });
   return dir;
 }
