@@ -60,11 +60,6 @@ export interface RunView {
 const MAX_RESULT_CHARS = 4_000;
 const WAITING_TEXT = 'Waiting for the model…';
 
-function isoMs(value: string | undefined): number | undefined {
-  const ms = value ? Date.parse(value) : Number.NaN;
-  return Number.isNaN(ms) ? undefined : ms;
-}
-
 /** Pure: turns TurnRunner events into what the panel shows. Replaying a recording gives the same view. */
 export class RunViewBuilder {
   private view: RunView = {
@@ -98,6 +93,11 @@ export class RunViewBuilder {
   setSession(model: string | undefined, sessionUrl: string | undefined): void {
     this.view.model = model;
     this.view.sessionUrl = sessionUrl;
+  }
+
+  /** Work after the agent's turn, such as a review ForgeLens opened itself, has finished. */
+  finishLocalWork(stopped: boolean): void {
+    this.applyOutcome(stopped ? { status: 'cancelled', reason: 'client-cancelled' } : { status: 'done', output: '' });
   }
 
   /** Clears the transcript for a new conversation; the model stays. */
@@ -292,9 +292,11 @@ export class RunViewBuilder {
           result: undefined,
         };
         this.toolById.set(call.id, tool);
-        this.toolStartedAt.set(call.id, isoMs(message.createdAt) ?? this.now());
         items.push(tool);
       }
+      // The call is ready when the model finishes writing it, which is the last time it changes. Timing from
+      // the message's start would count the model's own thinking as tool time.
+      if (tool.status === 'running') this.toolStartedAt.set(call.id, this.now());
       tool.name = resolved.name;
       tool.server = resolved.server;
       tool.args = resolved.args;
@@ -328,8 +330,7 @@ export class RunViewBuilder {
         : 'done';
     tool.result = content.length > MAX_RESULT_CHARS ? `${content.slice(0, MAX_RESULT_CHARS)}\n[shortened for display]` : content;
     const started = this.toolStartedAt.get(event.toolCallId);
-    const ended = isoMs(event.createdAt) ?? this.now();
-    tool.durationMs = started === undefined ? undefined : Math.max(0, ended - started);
+    tool.durationMs = started === undefined ? undefined : Math.max(0, this.now() - started);
     // Once no tool is still running, the turn is waiting on the model again.
     const toolRunning = [...this.toolById.values()].some((other) => other.status === 'running');
     if (!toolRunning && this.view.status === 'running') {

@@ -52,7 +52,7 @@ describe('apply_changes approval drives the review (recorded events, no model)',
       createSession: () => Promise.resolve(`sess-${String(sessionCounter.next())}`),
       ensureReady: () => Promise.resolve('p/m'),
       onChange: () => undefined,
-      reviewApproval: (approval, signal) => (approval.call.name === 'apply_changes' ? flow.requestReview(approval, signal) : undefined),
+      reviewApproval: (approval, signal) => (approval.call.name === 'apply_changes' ? flow.requestReview(signal) : undefined),
       discardStaged: () => flow.discard(),
     });
     flow = new ReviewFlow(new NodeEditorPort(dir), { onCard: (card) => controller.updateReview(card) });
@@ -299,5 +299,49 @@ describe('RunViewBuilder heartbeat and status text', () => {
     view.review({ ...base, phase: 'applied', text: 'two', accepted: 1, pending: 0, canUndo: true });
     expect(view.snapshot.items.filter((item) => item.kind === 'review')).toHaveLength(1);
     expect(view.snapshot.items.at(-1)).toMatchObject({ phase: 'applied', text: 'two', canUndo: true });
+  });
+});
+
+describe('tool card duration', () => {
+  it('leaves out the time the model spent writing the call', () => {
+    const events = loadRecording('preloaded-allow').turns.flat();
+    const call = events.find((event) => event.type === 'model.message' && (event.toolCalls?.length ?? 0) > 0);
+    if (call?.type !== 'model.message') throw new Error('The recording has no tool call.');
+    const id = call.toolCalls?.[0]?.id ?? '';
+    const response = { type: 'tool.response', id: 'r', threadId: 'main', toolCallId: id, content: 'ok', createdAt: '2026-11-03T00:00:00Z' } as unknown as TurnEvent;
+
+    let now = 1_000;
+    const view = new RunViewBuilder(() => now);
+    view.userMessage('go');
+    const shell = { ...call, toolCalls: undefined, content: '' };
+    view.apply(shell, shell);
+    now += 39_500; // The model takes this long to think and write the call.
+    view.apply(call, call);
+    now += 120; // The tool itself is quick.
+    view.apply(response, response);
+
+    expect(tools(view.snapshot.items)[0]?.durationMs).toBe(120);
+  });
+
+  it('times a gated tool from the user decision, not the request', () => {
+    const events = loadRecording('preloaded-allow').turns.flat();
+    const call = events.find((event) => event.type === 'model.message' && (event.toolCalls?.length ?? 0) > 0);
+    if (call?.type !== 'model.message') throw new Error('The recording has no tool call.');
+    const id = call.toolCalls?.[0]?.id ?? '';
+    const sourceEventId = call.id;
+    const required = { type: 'tool.approval_required', id: 'a', threadId: 'main', toolCalls: [{ id, sourceEventId }] } as unknown as TurnEvent;
+    const response = { type: 'tool.response', id: 'r', threadId: 'main', toolCallId: id, content: 'ok' } as unknown as TurnEvent;
+
+    let now = 0;
+    const view = new RunViewBuilder(() => now);
+    view.userMessage('go');
+    view.apply(call, call);
+    view.apply(required, required);
+    now += 60_000; // The person reads the diff for a minute.
+    view.approvalDecided(id, true);
+    now += 200;
+    view.apply(response, response);
+
+    expect(tools(view.snapshot.items)[0]?.durationMs).toBe(200);
   });
 });

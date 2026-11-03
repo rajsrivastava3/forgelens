@@ -105,3 +105,64 @@ describe('AgentController', () => {
     expect(sessions.inputs).toHaveLength(0);
   });
 });
+
+describe('AgentController per-request options', () => {
+  it('uses the named agent in its own session and shows the short text', async () => {
+    const { turns } = loadRecording('subagent-read');
+    const sessions = replaySessions([...turns, ...turns, ...turns]);
+    const { instance, createSession } = controller(sessions);
+    await instance.send('panel question');
+    await instance.send('long prompt with the selection in it', { agentName: 'forgelens-inline', display: 'Edit a.py', freshSession: true });
+    expect(createSession).toHaveBeenCalledTimes(2);
+    expect(createSession).toHaveBeenLastCalledWith('forgelens-inline');
+    expect(instance.view.items.filter((item) => item.kind === 'user').at(-1)).toMatchObject({ text: 'Edit a.py' });
+    expect(sessions.inputs[1]?.[0]).toMatchObject({ content: 'long prompt with the selection in it' });
+    await instance.send('back to the panel');
+    expect(createSession).toHaveBeenCalledTimes(3);
+    expect(createSession).toHaveBeenLastCalledWith('forgelens-agent');
+  });
+
+  it('runs afterTurn with the final text, stays busy meanwhile, and shows a returned problem', async () => {
+    const { turns } = loadRecording('subagent-read');
+    const { instance } = controller(replaySessions(turns));
+    let busyDuring = false;
+    await instance.send('go', {
+      afterTurn: (output) => {
+        busyDuring = instance.isBusy;
+        expect(output.length).toBeGreaterThan(0);
+        return Promise.resolve('The model did not propose a change.');
+      },
+    });
+    expect(busyDuring).toBe(true);
+    expect(instance.view).toMatchObject({ status: 'error', error: 'The model did not propose a change.' });
+  });
+
+  it('Stop during afterTurn ends the request as cancelled', async () => {
+    const { turns } = loadRecording('subagent-read');
+    const discard = vi.fn();
+    const { instance } = controller(replaySessions(turns), { discardStaged: discard });
+    let entered = false;
+    const sending = instance.send('go', {
+      afterTurn: (_output, signal) =>
+        new Promise((resolve) => {
+          entered = true;
+          signal.addEventListener('abort', () => resolve(undefined));
+        }),
+    });
+    await vi.waitFor(() => expect(entered).toBe(true));
+    await instance.stop();
+    await sending;
+    expect(discard).toHaveBeenCalled();
+    expect(instance.view.status).toBe('cancelled');
+    expect(instance.isBusy).toBe(false);
+  });
+
+  it('does not run afterTurn when the turn failed', async () => {
+    const { turns } = loadRecording('error-429');
+    const afterTurn = vi.fn();
+    const { instance } = controller(replaySessions(turns));
+    await instance.send('go', { afterTurn });
+    expect(afterTurn).not.toHaveBeenCalled();
+    expect(instance.view.status).toBe('error');
+  });
+});

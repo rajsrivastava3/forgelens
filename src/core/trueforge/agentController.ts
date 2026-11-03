@@ -8,8 +8,8 @@ export interface AgentControllerOptions {
   baseUrl: () => string;
   agentName: string;
   sessions: () => SessionsApi;
-  /** Creates a session for the saved agent and returns its id. */
-  createSession: () => Promise<string>;
+  /** Creates a session for the named saved agent and returns its id. */
+  createSession: (agentName: string) => Promise<string>;
   /** Runs before each request, so a stale or missing setup is fixed or explained. Returns the model. */
   ensureReady: () => Promise<string>;
   onChange: () => void;
@@ -23,6 +23,17 @@ export interface AgentControllerOptions {
   heartbeatMs?: number;
 }
 
+export interface SendOptions {
+  /** Defaults to the panel's agent. A different agent gets its own session. */
+  agentName?: string;
+  /** What the panel shows, when the prompt itself is longer than a person wants to read. */
+  display?: string;
+  /** Always start a new session, because this request stands alone. */
+  freshSession?: boolean;
+  /** Runs after a finished turn, while Stop still works. A returned message is shown as a failure. */
+  afterTurn?: (output: string, signal: AbortSignal) => Promise<string | undefined>;
+}
+
 interface WaitingApproval {
   resolve: (decision: ApprovalDecision) => void;
 }
@@ -32,6 +43,8 @@ export class AgentController {
   private readonly builder: RunViewBuilder;
   private sessionId: string | undefined;
   private sessionModel: string | undefined;
+  private sessionAgent: string | undefined;
+  private afterTurnStop: AbortController | undefined;
   private run: AgentRun | undefined;
   private stopRequested = false;
   private busy = false;
@@ -61,13 +74,14 @@ export class AgentController {
   }
 
   /** Resolves when this request has fully ended. Never rejects; failures appear in the view. */
-  async send(text: string): Promise<void> {
+  async send(text: string, sendOptions: SendOptions = {}): Promise<void> {
     const message = text.trim();
     if (!message || this.busy) return;
     this.busy = true;
     this.stopRequested = false;
-    this.builder.userMessage(message);
+    this.builder.userMessage(sendOptions.display ?? message);
     this.options.onChange();
+    const agentName = sendOptions.agentName ?? this.options.agentName;
     this.heartbeat = setInterval(() => {
       this.builder.heartbeat();
       this.options.onChange();
@@ -87,9 +101,10 @@ export class AgentController {
 
     try {
       // A session keeps the model it started with, so a switch needs a new one.
-      if (!this.sessionId || model !== this.sessionModel) {
-        this.sessionId = await this.options.createSession();
+      if (!this.sessionId || model !== this.sessionModel || agentName !== this.sessionAgent || sendOptions.freshSession) {
+        this.sessionId = await this.options.createSession(agentName);
         this.sessionModel = model;
+        this.sessionAgent = agentName;
       }
       this.builder.setSession(model, `${this.options.baseUrl()}/sessions/${this.sessionId}`);
       this.options.onChange();
@@ -110,6 +125,9 @@ export class AgentController {
       const outcome = await this.run.send(message);
       if (outcome.status === 'cancelled' || outcome.status === 'error') this.options.discardStaged?.();
       if (outcome.status === 'cancelled' && outcome.reason === STOPPED_DURING_APPROVAL) this.sessionId = undefined;
+      if (outcome.status === 'done' && sendOptions.afterTurn && !this.stopRequested) {
+        await this.runAfterTurn(outcome.output, sendOptions.afterTurn);
+      }
     } catch (error) {
       this.options.discardStaged?.();
       const raw = error instanceof Error ? error.message : String(error);
@@ -123,6 +141,15 @@ export class AgentController {
     }
   }
 
+  private async runAfterTurn(output: string, afterTurn: NonNullable<SendOptions['afterTurn']>): Promise<void> {
+    this.afterTurnStop = new AbortController();
+    const { signal } = this.afterTurnStop;
+    const problem = await afterTurn(output, signal);
+    this.afterTurnStop = undefined;
+    if (problem) this.builder.fail(problem);
+    else this.builder.finishLocalWork(signal.aborted);
+  }
+
   /** Updates the view at once. The promise settles when the server has been told. */
   stop(): Promise<void> {
     if (!this.busy) return Promise.resolve();
@@ -130,6 +157,7 @@ export class AgentController {
     this.builder.markStopping();
     this.options.onChange();
     this.options.discardStaged?.();
+    this.afterTurnStop?.abort();
     return this.run?.stop() ?? Promise.resolve();
   }
 
@@ -144,6 +172,7 @@ export class AgentController {
     if (this.busy) return;
     this.sessionId = undefined;
     this.sessionModel = undefined;
+    this.sessionAgent = undefined;
     this.options.discardStaged?.();
     this.builder.reset();
     this.options.onChange();
