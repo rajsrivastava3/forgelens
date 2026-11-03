@@ -11,7 +11,9 @@ export interface PanelState {
 export type ToWebview =
   | { type: 'state'; state: PanelState }
   /** Test hook: presses a real button and reports how quickly the page reacted. */
-  | { type: 'probe-click'; selector: string };
+  | { type: 'probe-click'; selector: string }
+  /** Test hook: sends the page the key press a person would make. */
+  | { type: 'probe-ctrl-z' };
 
 export type ToExtension =
   | { type: 'ready' }

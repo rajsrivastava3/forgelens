@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Changeset, normalizeStagePath, StagedEditorPort } from '../../src/core/changeset/changeset';
 import { decodeText, encodeText } from '../../src/core/changeset/encoding';
-import { applyAcceptedHunks, computeHunks, dominantEol, splitKeepingEol } from '../../src/core/changeset/hunks';
+import { applyAcceptedHunks, computeHunks, dominantEol, firstChangedLine, splitKeepingEol } from '../../src/core/changeset/hunks';
 import { applyEdit, EditMatchError } from '../../src/core/changeset/matchEdit';
 import { NodeEditorPort } from '../../src/core/tools/nodeEditorPort';
 import { readFileTool } from '../../src/core/tools/readFile';
@@ -21,6 +21,13 @@ describe('hunks', () => {
     expect(hunks).toHaveLength(2);
     expect(hunks[0]).toMatchObject({ oldStart: 2, oldLines: 7, added: 1, removed: 1 });
     expect(hunks[0]?.lines.filter((line) => line.startsWith(' '))).toHaveLength(6);
+  });
+
+  it('finds the changed line, not the first context line', () => {
+    const before = numbered(30);
+    const [hunk] = computeHunks('a.py', before, before.replace('line 10\n', 'ten\n'));
+    expect(hunk?.newStart).toBe(7);
+    expect(hunk && firstChangedLine(hunk)).toBe(10);
   });
 
   it('merges edits close enough that their context overlaps', () => {

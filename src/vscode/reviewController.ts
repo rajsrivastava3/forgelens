@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { FileChange } from '../core/changeset/changeset';
-import type { Hunk } from '../core/changeset/hunks';
+import { firstChangedLine, type Hunk } from '../core/changeset/hunks';
 import type { HunkDecision, ReviewFlow } from '../core/changeset/reviewFlow';
 
 export const PROPOSED_SCHEME = 'forgelens-proposed';
@@ -101,11 +101,11 @@ export class ReviewController
   // One lens row above every hunk, on the proposed side.
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const change = this.flow.changeset.get(document.uri.path.slice(1));
-    if (!change || !this.flow.isReviewing || document.uri.query === EMPTY_QUERY) return [];
+    if (!change || !this.flow.isReviewing) return [];
+    // The empty side only carries lenses for a deletion, where it is the side that shows in the diff.
+    if (document.uri.query === EMPTY_QUERY && change.kind !== 'delete') return [];
     return change.hunks.flatMap((hunk) => {
-      const firstChanged = hunk.lines.findIndex((line) => line.startsWith('+') || line.startsWith('-'));
-      const contextBefore = hunk.lines.slice(0, Math.max(0, firstChanged)).length;
-      const line = Math.min(Math.max(0, hunk.newStart - 1 + contextBefore), Math.max(0, document.lineCount - 1));
+      const line = Math.min(Math.max(0, firstChangedLine(hunk) - 1), Math.max(0, document.lineCount - 1));
       const range = new vscode.Range(line, 0, line, 0);
       const decision = this.flow.decisionOf(hunk.id);
       const accept = decision === 'accepted' ? '$(check) Accepted' : 'Accept hunk';
@@ -137,7 +137,7 @@ export class ReviewController
       return item;
     }
     const { hunk } = node;
-    const item = new vscode.TreeItem(`Line ${hunk.newStart}: ${firstChange(hunk)}`, vscode.TreeItemCollapsibleState.None);
+    const item = new vscode.TreeItem(`Line ${firstChangedLine(hunk)}: ${firstChange(hunk)}`, vscode.TreeItemCollapsibleState.None);
     item.id = hunk.id;
     item.description = `+${hunk.added} -${hunk.removed}`;
     item.tooltip = new vscode.MarkdownString(`\`${hunk.id}\`\n\n\`\`\`diff\n${hunk.lines.join('\n')}\n\`\`\``);
@@ -195,7 +195,7 @@ export class ReviewController
   }
 
   private async reveal(change: FileChange, hunk?: Hunk): Promise<void> {
-    const line = Math.max(0, (hunk?.newStart ?? 1) - 1);
+    const line = Math.max(0, (hunk ? firstChangedLine(hunk) : 1) - 1);
     await this.showDiff(change, { preview: false, selection: new vscode.Range(line, 0, line, 0) });
   }
 

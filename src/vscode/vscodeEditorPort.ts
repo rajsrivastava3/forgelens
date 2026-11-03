@@ -89,48 +89,53 @@ export class VscodeEditorPort implements WritablePort {
   }
 
   /**
-   * One WorkspaceEdit across every file, then save, so the change is atomic and Ctrl+Z works. Saving can
-   * still change bytes (format on save, a file's own encoding, mixed line endings the editor normalised),
-   * so the result is compared with what was approved and corrected if it differs.
+   * Changes to existing files go in one WorkspaceEdit, then save, so Ctrl+Z works across them. New and deleted
+   * files go through the file system: VS Code refused WorkspaceEdit deletions here, and an edit mixing the two
+   * came back refused with the new file already created, so it is not all-or-nothing anyway. Any failure below
+   * restores every file. Saving can change more than the edit (format on save, a file's own encoding, mixed line
+   * endings the editor normalised), so the result is compared with what was approved and corrected if it differs.
    */
   async writeFiles(writes: readonly FileWrite[]): Promise<void> {
     const targets = writes.map((write) => ({ ...write, uri: this.uriOf(write.path) }));
     const before = await Promise.all(targets.map((target) => this.readUri(target.uri)));
+    const textTargets = targets.filter((target, index) => target.bytes !== undefined && before[index] !== undefined);
 
-    const edited: vscode.Uri[] = [];
     try {
-      // VS Code refuses an edit built against a document it is reloading, so build it afresh and try again.
-      for (let attempt = 1; ; attempt += 1) {
-        edited.length = 0;
-        const edit = new vscode.WorkspaceEdit();
-        for (const [index, target] of targets.entries()) {
-          if (target.bytes === undefined) {
-            edit.deleteFile(target.uri, { ignoreIfNotExists: true });
-          } else if (before[index] === undefined) {
-            edit.createFile(target.uri, { contents: target.bytes, overwrite: false });
-          } else {
-            const document = await vscode.workspace.openTextDocument(target.uri);
-            const change = minimalEdit(document, decodeForEditor(target.bytes));
-            if (change) {
-              edit.replace(target.uri, change.range, change.newText);
-              edited.push(target.uri);
-            }
-          }
-        }
-        if (await vscode.workspace.applyEdit(edit)) break;
-        if (attempt >= EDIT_ATTEMPTS) throw new Error('VS Code refused the edit.');
-        await new Promise((resolve) => setTimeout(resolve, EDIT_RETRY_DELAY_MS));
-      }
+      const edited = await this.applyTextEdits(textTargets);
       await Promise.all(edited.map((uri) => saveDocument(uri)));
-      for (const target of targets) {
-        if (target.bytes !== undefined && !bytesEqual(await this.readUri(target.uri), target.bytes)) {
-          const { uri, bytes } = target;
+      for (const [index, target] of targets.entries()) {
+        const { uri, bytes } = target;
+        if (bytes === undefined) {
+          if (before[index] !== undefined) await retryWhileLocked(() => vscode.workspace.fs.delete(uri, { useTrash: false }));
+        } else if (!bytesEqual(await this.readUri(uri), bytes)) {
           await retryWhileLocked(() => vscode.workspace.fs.writeFile(uri, bytes));
         }
       }
     } catch (error) {
       await this.restore(targets, before);
       throw error;
+    }
+  }
+
+  /** The text an open editor holds, which may differ from disk. */
+  openDocumentText(relativePath: string): string | undefined {
+    return this.openDocument(resolveInsideWorkspace(this.workspaceRoot, relativePath))?.getText();
+  }
+
+  /** Returns the files that need saving. VS Code refuses an edit built against a document it is reloading, so this retries afresh. */
+  private async applyTextEdits(targets: readonly (FileWrite & { uri: vscode.Uri })[]): Promise<vscode.Uri[]> {
+    for (let attempt = 1; ; attempt += 1) {
+      const edit = new vscode.WorkspaceEdit();
+      const toSave: vscode.Uri[] = [];
+      for (const target of targets) {
+        const document = await vscode.workspace.openTextDocument(target.uri);
+        const change = minimalEdit(document, decodeForEditor(target.bytes ?? new Uint8Array()));
+        if (change) edit.replace(target.uri, change.range, change.newText);
+        if (change || document.isDirty) toSave.push(target.uri);
+      }
+      if (edit.size === 0 || (await vscode.workspace.applyEdit(edit))) return toSave;
+      if (attempt >= EDIT_ATTEMPTS) throw new Error('VS Code refused the edit.');
+      await new Promise((resolve) => setTimeout(resolve, EDIT_RETRY_DELAY_MS));
     }
   }
 

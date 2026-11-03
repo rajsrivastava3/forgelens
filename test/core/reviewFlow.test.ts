@@ -5,16 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ReviewFlow, type ReviewCard } from '../../src/core/changeset/reviewFlow';
 import { NodeEditorPort } from '../../src/core/tools/nodeEditorPort';
 import { stageCreateFileTool, stageDeleteFileTool, stageEditTool } from '../../src/core/tools/stageTools';
-import type { PendingApproval } from '../../src/core/trueforge/turnRunner';
 
 const numbered = (count: number, eol = '\n'): string =>
   Array.from({ length: count }, (_, i) => `line ${i + 1}`).join(eol) + eol;
-
-const APPROVAL: PendingApproval = {
-  threadId: 'main',
-  toolCallId: 'call-1',
-  call: { id: 'call-1', name: 'apply_changes', server: 'forgelens-editor', args: { summary: 's' }, viaCallTool: false, system: false },
-};
 
 describe('ReviewFlow', () => {
   let dir: string;
@@ -53,7 +46,7 @@ describe('ReviewFlow', () => {
 
   it('opens a review that says what is waiting', async () => {
     await stageTwoFiles();
-    void flow.requestReview(APPROVAL);
+    void flow.requestReview();
     expect(flow.isReviewing).toBe(true);
     expect(lastCard()).toMatchObject({ phase: 'reviewing', text: '2 files, 3 hunks, waiting for your review', pending: 3, canUndo: false });
   });
@@ -61,7 +54,7 @@ describe('ReviewFlow', () => {
   it('partial accept across files writes only accepted hunks, and tells the model which', async () => {
     await stageTwoFiles();
     const [aFive, aThirty, bTen] = flow.changeset.hunks;
-    const decision = flow.requestReview(APPROVAL);
+    const decision = flow.requestReview();
 
     flow.setDecision(aFive?.id as string, 'accepted');
     flow.setDecision(aThirty?.id as string, 'rejected');
@@ -86,7 +79,7 @@ describe('ReviewFlow', () => {
   it('counts undecided hunks as rejected', async () => {
     await stageTwoFiles();
     const [first] = flow.changeset.hunks;
-    void flow.requestReview(APPROVAL);
+    void flow.requestReview();
     flow.setDecision(first?.id as string, 'accepted');
     await flow.applyDecisions();
     expect(await flow.applyApproved('s')).toContain('1 of 3 hunks');
@@ -96,7 +89,7 @@ describe('ReviewFlow', () => {
   it('all rejected denies with every hunk id and writes nothing', async () => {
     await stageTwoFiles();
     const ids = flow.changeset.hunks.map((hunk) => hunk.id);
-    const decision = flow.requestReview(APPROVAL);
+    const decision = flow.requestReview();
     flow.setAll('rejected');
     await flow.applyDecisions();
     await expect(decision).resolves.toEqual({ allow: false, reason: `user rejected all hunks: ${ids.join(', ')}` });
@@ -114,7 +107,7 @@ describe('ReviewFlow', () => {
 
   it('is safe when apply_changes is called twice', async () => {
     await stageTwoFiles();
-    void flow.requestReview(APPROVAL);
+    void flow.requestReview();
     flow.setAll('accepted');
     await flow.applyDecisions();
     await flow.applyApproved('once');
@@ -125,21 +118,21 @@ describe('ReviewFlow', () => {
 
   it('a second approval in the same pause does not open another review', async () => {
     await stageTwoFiles();
-    void flow.requestReview(APPROVAL);
+    void flow.requestReview();
     flow.setAll('accepted');
     await flow.applyDecisions();
-    await expect(flow.requestReview(APPROVAL)).resolves.toMatchObject({ allow: false });
+    await expect(flow.requestReview()).resolves.toMatchObject({ allow: false });
   });
 
   it('with nothing staged it denies at once, without asking the user', async () => {
-    await expect(flow.requestReview(APPROVAL)).resolves.toMatchObject({ allow: false, reason: expect.stringMatching(/Nothing is staged/) });
+    await expect(flow.requestReview()).resolves.toMatchObject({ allow: false, reason: expect.stringMatching(/Nothing is staged/) });
     expect(flow.isReviewing).toBe(false);
   });
 
   it('applies new files and deletions, and leaves them when rejected', async () => {
     await stageCreateFileTool(flow.changeset, dir, { path: 'src/new/deep.py', content: 'new\n' });
     await stageDeleteFileTool(flow.changeset, dir, { path: 'src/b.py' });
-    void flow.requestReview(APPROVAL);
+    void flow.requestReview();
     flow.setAll('accepted');
     await flow.applyDecisions();
     await flow.applyApproved('add and remove');
@@ -157,7 +150,7 @@ describe('ReviewFlow', () => {
     await stageEditTool(flow.changeset, dir, { path: 'src/a.py', edits: [{ old_text: 'line 5\n', new_text: 'five\n' }] });
     const del = flow.changeset.get('src/b.py')?.hunks[0];
     const edit = flow.changeset.get('src/a.py')?.hunks[0];
-    void flow.requestReview(APPROVAL);
+    void flow.requestReview();
     flow.setDecision(del?.id as string, 'rejected');
     flow.setDecision(edit?.id as string, 'accepted');
     await flow.applyDecisions();
@@ -176,7 +169,7 @@ describe('ReviewFlow', () => {
       ],
     });
     const [first] = flow.changeset.hunks;
-    void flow.requestReview(APPROVAL);
+    void flow.requestReview();
     flow.setDecision(first?.id as string, 'accepted');
     await flow.applyDecisions();
     await flow.applyApproved('s');
@@ -191,7 +184,7 @@ describe('ReviewFlow', () => {
   describe('file changed on disk after staging', () => {
     it('re-diffs, warns and keeps the review open instead of clobbering', async () => {
       await stageTwoFiles();
-      const decision = flow.requestReview(APPROVAL);
+      const decision = flow.requestReview();
       flow.setAll('accepted');
       const userVersion = numbered(40).replace('line 20\n', 'user wrote this\n');
       writeFileSync(path.join(dir, 'src/a.py'), userVersion);
@@ -214,7 +207,7 @@ describe('ReviewFlow', () => {
 
     it('never overwrites when the change lands between Apply and the tool running', async () => {
       await stageTwoFiles();
-      void flow.requestReview(APPROVAL);
+      void flow.requestReview();
       flow.setAll('accepted');
       await flow.applyDecisions();
       const userVersion = numbered(40).replace('line 5\n', 'user fifth\n');
@@ -230,7 +223,7 @@ describe('ReviewFlow', () => {
 
     it('denies when nothing is left to apply', async () => {
       await stageEditTool(flow.changeset, dir, { path: 'src/a.py', edits: [{ old_text: 'line 5\n', new_text: 'five\n' }] });
-      const decision = flow.requestReview(APPROVAL);
+      const decision = flow.requestReview();
       flow.setAll('accepted');
       rmSync(path.join(dir, 'src/a.py'));
       await flow.applyDecisions();
@@ -242,7 +235,7 @@ describe('ReviewFlow', () => {
 
   describe('undo', () => {
     const applyAll = async (): Promise<void> => {
-      void flow.requestReview(APPROVAL);
+      void flow.requestReview();
       flow.setAll('accepted');
       await flow.applyDecisions();
       await flow.applyApproved('s');
@@ -300,7 +293,7 @@ describe('ReviewFlow', () => {
     it('Stop during review closes it and writes nothing', async () => {
       await stageTwoFiles();
       const stop = new AbortController();
-      void flow.requestReview(APPROVAL, stop.signal);
+      void flow.requestReview(stop.signal);
       flow.setAll('accepted');
       stop.abort();
       expect(flow.isReviewing).toBe(false);
@@ -312,7 +305,7 @@ describe('ReviewFlow', () => {
 
     it('Stop after allow but before the tool runs writes nothing', async () => {
       await stageTwoFiles();
-      void flow.requestReview(APPROVAL);
+      void flow.requestReview();
       flow.setAll('accepted');
       await flow.applyDecisions();
       flow.discard();
@@ -323,7 +316,7 @@ describe('ReviewFlow', () => {
 
     it('Stop during apply is safe: the applied change lands whole and can be undone', async () => {
       await stageTwoFiles();
-      void flow.requestReview(APPROVAL);
+      void flow.requestReview();
       flow.setAll('accepted');
       await flow.applyDecisions();
       const applying = flow.applyApproved('s');
@@ -340,7 +333,7 @@ describe('ReviewFlow', () => {
 
   it('a failed write restores what it changed and reports it', async () => {
     await stageTwoFiles();
-    void flow.requestReview(APPROVAL);
+    void flow.requestReview();
     flow.setAll('accepted');
     await flow.applyDecisions();
     // b.py becomes a directory, so writing it fails after a.py has already been written.
@@ -353,7 +346,7 @@ describe('ReviewFlow', () => {
     writeFileSync(path.join(dir, 'src/c.py'), numbered(40));
     await stageEditTool(other.changeset, dir, { path: 'src/c.py', edits: [{ old_text: 'line 5\n', new_text: 'c five\n' }] });
     await stageEditTool(other.changeset, dir, { path: 'src/b.py', edits: [{ old_text: 'line 5\n', new_text: 'b five\n' }] });
-    void other.requestReview(APPROVAL);
+    void other.requestReview();
     other.setAll('accepted');
     await other.applyDecisions();
 
@@ -361,5 +354,62 @@ describe('ReviewFlow', () => {
     expect(onDisk('src/c.py')).toBe(numbered(40));
     expect(lastCard()?.phase).toBe('failed');
     expect(lastCard()?.text).toContain('workspace is unchanged');
+  });
+});
+
+describe('Ctrl+Z in an editor after an apply', () => {
+  let dir: string;
+  let open: Map<string, string>;
+  let flow: ReviewFlow;
+  const onDisk = (file: string): string => readFileSync(path.join(dir, file), 'utf8');
+
+  beforeEach(async () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'forgelens ctrlz '));
+    mkdirSync(path.join(dir, 'src'));
+    writeFileSync(path.join(dir, 'src/a.py'), numbered(40));
+    writeFileSync(path.join(dir, 'src/b.py'), numbered(40, '\r\n'));
+    open = new Map();
+    const port = new NodeEditorPort(dir);
+    flow = new ReviewFlow(Object.assign(Object.create(port) as NodeEditorPort, { openDocumentText: (file: string) => open.get(file) }));
+    await stageEditTool(flow.changeset, dir, { path: 'src/a.py', edits: [{ old_text: 'line 5\n', new_text: 'five\n' }] });
+    await stageEditTool(flow.changeset, dir, { path: 'src/b.py', edits: [{ old_text: 'line 5\n', new_text: 'five\n' }] });
+    void flow.requestReview();
+    flow.setAll('accepted');
+    await flow.applyDecisions();
+    await flow.applyApproved('s');
+  });
+
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('saves and records the revert once every file matches', async () => {
+    open.set('src/a.py', numbered(40));
+    open.set('src/b.py', numbered(40)); // The editor may hold another line ending than the file.
+    expect(flow.lastAppliedTouches('src/a.py')).toBe(true);
+    await expect(flow.syncAfterEditorUndo()).resolves.toMatchObject({ ok: true, files: 2 });
+    expect(onDisk('src/a.py')).toBe(numbered(40));
+    expect(onDisk('src/b.py')).toBe(numbered(40, '\r\n'));
+    expect(flow.canUndo).toBe(false);
+    expect(flow.lastAppliedTouches('src/a.py')).toBe(false);
+  });
+
+  it('does nothing while one file still differs', async () => {
+    open.set('src/a.py', numbered(40));
+    open.set('src/b.py', numbered(40).replace('line 5', 'five'));
+    await expect(flow.syncAfterEditorUndo()).resolves.toBeUndefined();
+    expect(onDisk('src/a.py')).toContain('five');
+    expect(flow.canUndo).toBe(true);
+  });
+
+  it('does nothing for a file that was closed and still has the change on disk', async () => {
+    open.set('src/a.py', numbered(40));
+    await expect(flow.syncAfterEditorUndo()).resolves.toBeUndefined();
+    expect(flow.canUndo).toBe(true);
+  });
+
+  it('does nothing with an empty stack', async () => {
+    open.set('src/a.py', numbered(40));
+    open.set('src/b.py', numbered(40));
+    await flow.undoLast();
+    await expect(flow.syncAfterEditorUndo()).resolves.toBeUndefined();
   });
 });

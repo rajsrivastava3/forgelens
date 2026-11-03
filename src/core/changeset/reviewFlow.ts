@@ -1,8 +1,7 @@
 import type { ApprovalDecision } from '../trueforge/agentRun';
-import type { PendingApproval } from '../trueforge/turnRunner';
 import type { FileWrite, WritablePort } from '../tools/editorPort';
 import { Changeset, type DriftReport, type FileChange } from './changeset';
-import { bytesEqual } from './encoding';
+import { bytesEqual, decodeText } from './encoding';
 import type { Hunk } from './hunks';
 
 export const APPLY_TOOL = 'apply_changes';
@@ -65,6 +64,11 @@ export class ReviewFlow {
   private readonly undoStack: AppliedChange[] = [];
   private reviewCounter = 0;
 
+  /** How many reviews have opened, so a caller can tell whether one happened during its request. */
+  get reviewsStarted(): number {
+    return this.reviewCounter;
+  }
+
   constructor(
     private readonly port: WritablePort,
     private readonly events: ReviewFlowEvents = {},
@@ -88,8 +92,8 @@ export class ReviewFlow {
     return this.decisions.get(hunkId) ?? 'pending';
   }
 
-  /** Runs when the agent's apply_changes call pauses for approval. Settles when the user applies. */
-  requestReview(_approval: PendingApproval, signal?: AbortSignal): Promise<ApprovalDecision> {
+  /** Runs when the agent's apply_changes call pauses for approval. Settles when the user applies or stops. */
+  requestReview(signal?: AbortSignal, note?: string): Promise<ApprovalDecision> {
     if (this.approved) {
       return Promise.resolve({ allow: false, reason: 'This change was already reviewed; wait for its result.' });
     }
@@ -101,10 +105,17 @@ export class ReviewFlow {
     }
     this.reviewCounter += 1;
     this.decisions.clear();
-    const card = this.buildCard(`review-${this.reviewCounter}`, 'reviewing');
+    const card = { ...this.buildCard(`review-${this.reviewCounter}`, 'reviewing'), warning: note };
     return new Promise((resolve) => {
       this.active = { card, resolve };
-      signal?.addEventListener('abort', () => this.discard(), { once: true });
+      signal?.addEventListener(
+        'abort',
+        () => {
+          this.discard();
+          resolve({ allow: false, reason: 'The user stopped this request.' });
+        },
+        { once: true },
+      );
       this.publish();
     });
   }
@@ -265,6 +276,35 @@ export class ReviewFlow {
       };
     }
 
+    return this.revert(entry);
+  }
+
+  /** True when this file is part of the newest applied change. */
+  lastAppliedTouches(relativePath: string): boolean {
+    return this.undoStack.at(-1)?.before.some((write) => write.path === relativePath) ?? false;
+  }
+
+  /**
+   * Ctrl+Z in an editor reverts the text of every file in the apply, but only in the editors: disk keeps the
+   * change and the undo stack does not know. Once every file matches what it was before the apply, this saves
+   * them and records the revert. A partial undo, or any other edit, leaves everything as it is.
+   */
+  async syncAfterEditorUndo(): Promise<UndoResult | undefined> {
+    const entry = this.undoStack.at(-1);
+    if (!entry) return undefined;
+    for (const write of entry.before) {
+      const open = this.port.openDocumentText?.(write.path);
+      if (open !== undefined) {
+        const wanted = write.bytes === undefined ? undefined : decodeText(write.bytes)?.text;
+        if (wanted === undefined || open.replace(/\r\n/g, '\n') !== wanted.replace(/\r\n/g, '\n')) return undefined;
+      } else if (!bytesEqual(await this.port.readDiskBytes(write.path), write.bytes)) {
+        return undefined;
+      }
+    }
+    return this.revert(entry);
+  }
+
+  private async revert(entry: AppliedChange): Promise<UndoResult> {
     try {
       await this.port.writeFiles(entry.before);
     } catch (error) {

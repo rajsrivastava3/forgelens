@@ -313,6 +313,13 @@ input.addEventListener('keydown', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && state?.busy) pressStop();
+  // Right after Apply, focus is here and no editor is open, so Ctrl+Z would otherwise do nothing.
+  const typing = event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement;
+  const undoKey = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z';
+  if (undoKey && !typing && state?.view.items.some((item) => item.kind === 'review' && item.canUndo)) {
+    event.preventDefault();
+    post({ type: 'undo' });
+  }
 });
 transcript.addEventListener('click', (event) => {
   // Links open through the editor, not inside the webview.
@@ -323,6 +330,8 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
   const message = event.data;
   if (message.type === 'state') {
     render(message.state);
+  } else if (message.type === 'probe-ctrl-z') {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
   } else if (message.type === 'probe-click') {
     const target = document.querySelector<HTMLElement>(message.selector);
     // A script can click what a person cannot see, so insist the target is really on screen.

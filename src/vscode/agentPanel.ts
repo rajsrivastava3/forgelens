@@ -73,6 +73,11 @@ export class AgentPanel implements vscode.WebviewViewProvider {
     });
   }
 
+  /** Test hook. */
+  pressCtrlZForTest(): void {
+    this.post({ type: 'probe-ctrl-z' });
+  }
+
   dispose(): void {
     clearTimeout(this.timer);
   }

@@ -33,6 +33,8 @@ export interface WritablePort extends EditorPort {
   readDiskBytes(relativePath: string): Promise<Uint8Array | undefined>;
   /** True when the user has edits in an open editor that are not saved yet. */
   hasUnsavedChanges(relativePath: string): boolean;
+  /** The text an open editor holds, or undefined when the file is not open. */
+  openDocumentText?(relativePath: string): string | undefined;
   /** Writes every file or none. Rejects after restoring anything it had already changed. */
   writeFiles(writes: readonly FileWrite[]): Promise<void>;
 }

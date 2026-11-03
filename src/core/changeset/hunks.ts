@@ -99,6 +99,12 @@ export function hunkBlocks(oldText: string, newText: string, hunk: Hunk): { befo
   };
 }
 
+/** The 1-based line on the proposed side where this hunk's change begins, after its context lines. */
+export function firstChangedLine(hunk: Hunk): number {
+  const context = hunk.lines.findIndex((line) => line.startsWith('+') || line.startsWith('-'));
+  return hunk.newStart + Math.max(0, context);
+}
+
 export function formatHunk(hunk: Hunk): string {
   return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@ [${hunk.id}]\n${hunk.lines.join('\n')}`;
 }
