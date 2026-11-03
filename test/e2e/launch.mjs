@@ -2,12 +2,24 @@
 // the target repo and a throwaway profile. Usage: node test/e2e/launch.mjs <workDir> [scenario,scenario]
 // The review scenarios write to disk, so the real flask folder is never opened here.
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { downloadAndUnzipVSCode } from '@vscode/test-electron';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+// A test window and a clone need room, and running out of disk cuts commands off midway.
+const MIN_FREE_GB = 2;
+const systemDrive = process.env.SystemDrive ? `${process.env.SystemDrive}\\` : '/';
+for (const drive of new Set([systemDrive, path.parse(path.resolve(process.argv[2] ?? root)).root])) {
+  const { bavail, bsize } = statfsSync(drive);
+  const freeGb = (Number(bavail) * Number(bsize)) / 1024 ** 3;
+  if (freeGb < MIN_FREE_GB) {
+    console.error(`[e2e] Stopped: ${drive} has ${freeGb.toFixed(1)} GB free, and this needs ${MIN_FREE_GB} GB. Free some space first.`);
+    process.exit(3);
+  }
+}
+
 const work = path.resolve(process.argv[2] ?? path.join(root, 'out/e2e-work'));
 const profile = path.join(work, 'profile');
 const workspace = path.join(work, 'flask-copy');
@@ -28,6 +40,9 @@ writeFileSync(
       'forgelens.models': (process.env.FORGELENS_E2E_MODELS ?? 'google-gemini/gemini-flash-lite-latest').split(','),
       'security.workspace.trust.enabled': false,
       'workbench.startupEditor': 'none',
+      'window.dialogStyle': 'custom',
+      // A window capture cannot see what the graphics card draws, so the terminal would come out blank.
+      'terminal.integrated.gpuAcceleration': 'off',
       'chat.commandCenter.enabled': false,
       'workbench.secondarySideBar.defaultVisibility': 'hidden',
       'update.mode': 'none',
@@ -44,7 +59,7 @@ const env = {
   FORGELENS_E2E: '1',
   FORGELENS_E2E_ROOT: root,
   FORGELENS_E2E_WORKSPACE: workspace,
-  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'review,reject,stop-review,stop-staging,drift,crlf',
+  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'review,reject,stop-review,stop-staging,drift,crlf,create-delete,ctrl-z,keybindings,inline,inline-fallback,inline-cancel,inline-mentions',
 };
 delete env.ELECTRON_RUN_AS_NODE;
 

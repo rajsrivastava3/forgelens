@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
@@ -13,7 +13,8 @@ const scenarios = (process.env['FORGELENS_E2E_SCENARIOS'] ?? '').split(',');
 const shots = path.join(root, 'docs/screenshots');
 const results: Record<string, unknown> = {};
 const GAP_MS = Number(process.env['FORGELENS_E2E_GAP_S'] ?? 65) * 1000;
-const SCENARIO_LIMIT_MS = 420_000;
+const SCENARIO_LIMIT_MS = Number(process.env['FORGELENS_E2E_SCENARIO_LIMIT_S'] ?? 420) * 1000;
+const TASK_A_LIMIT_MS = 1_500_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 // A copy: the command hands back the live view, and these checks compare moments in time.
@@ -268,7 +269,19 @@ let scriptedCounter = 0;
 const stamp = (): string => new Date().toISOString();
 
 /** Plays TrueForge's side with no model: the shape of each event comes from the recorded P0 sessions. */
-function scriptedSessions(options: { waitBeforeCallMs?: number; onCancel?: () => void; onTurnStarted?: () => void } = {}): unknown {
+interface ScriptOptions {
+  waitBeforeCallMs?: number;
+  onCancel?: () => void;
+  onTurnStarted?: () => void;
+  /** Sees the prompt the agent would get. */
+  onPrompt?: (prompt: string) => void;
+  /** Runs before the apply_changes call, as an agent's stage_edit calls would. */
+  beforeCall?: () => Promise<void>;
+  /** The agent answers with this text and calls no tools. */
+  textAnswer?: string;
+}
+
+function scriptedSessions(options: ScriptOptions = {}): unknown {
   let cancelled: (() => void) | undefined;
   const events = async function* (input: { type: string; approval?: { status: string; reason?: string }; toolCallId?: string }[]): AsyncGenerator<{ data: unknown; id: string }> {
     scriptedCounter += 1;
@@ -290,6 +303,7 @@ function scriptedSessions(options: { waitBeforeCallMs?: number; onCancel?: () =>
 
     const decision = input[0];
     if (decision?.type !== 'user.tool_approval') {
+      options.onPrompt?.((decision as { content?: string } | undefined)?.content ?? '');
       const wait = new Promise<'cancel' | 'go'>((resolve) => {
         cancelled = () => resolve('cancel');
         setTimeout(() => resolve('go'), options.waitBeforeCallMs ?? 0);
@@ -298,6 +312,13 @@ function scriptedSessions(options: { waitBeforeCallMs?: number; onCancel?: () =>
         yield emit(done({ status: 'cancelled', reason: 'client-cancelled' }));
         return;
       }
+      if (options.textAnswer !== undefined) {
+        const answer = message(id('answer'), options.textAnswer);
+        yield emit(answer);
+        yield emit(done({ status: 'done', output: answer, requiredActions: [] }));
+        return;
+      }
+      await options.beforeCall?.();
       const sourceId = id('call-message');
       const callId = id('call');
       yield emit(
@@ -358,8 +379,8 @@ function reviewCard(view: RunView): Extract<ViewItem, { kind: 'review' }> | unde
 }
 
 /** Clicks the same CodeLens command a person clicks, found through the provider on the real document. */
-async function lensDecision(file: string, hunkId: string, accept: boolean): Promise<string[]> {
-  const uri = vscode.Uri.from({ scheme: PROPOSED, path: '/' + file });
+async function lensDecision(file: string, hunkId: string, accept: boolean, emptySide = false): Promise<string[]> {
+  const uri = vscode.Uri.from({ scheme: PROPOSED, path: '/' + file, ...(emptySide ? { query: 'empty' } : {}) });
   const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri);
   const titles = lenses.map((lens) => lens.command?.title ?? '');
   const lens = lenses.find((candidate) => candidate.command?.arguments?.[0] === hunkId && candidate.command.command === (accept ? 'forgelens.review.acceptHunk' : 'forgelens.review.rejectHunk'));
@@ -671,6 +692,452 @@ async function scenarioLive(): Promise<void> {
   check(live, 'a model reached the review; attempts: ' + JSON.stringify(attempts));
 }
 
+/** New and deleted files, through the real review and the VS Code port. */
+async function scenarioCreateDelete(): Promise<void> {
+  const created = 'src/flask/forgelens_new.py';
+  const deleted = 'docs/license.rst';
+  const deletedText = onDisk(deleted);
+  check(existsSync(path.join(workspace, deleted)), 'the file to delete exists');
+
+  // Accept both.
+  await useScripted();
+  await callMcpTool('stage_create_file', { path: created, content: 'NEW = 1\n' });
+  await callMcpTool('stage_delete_file', { path: deleted });
+  check(!existsSync(path.join(workspace, created)) && existsSync(path.join(workspace, deleted)), 'staging touches neither file');
+  let running = vscode.commands.executeCommand('forgelens.ask', 'Add and remove.');
+  await waitForReview();
+  const both = await hunks();
+  check(both.length === 2, 'one hunk each: ' + String(both.length));
+  const deleteHunk = both.find((hunk) => hunk.path === deleted);
+  const createHunk = both.find((hunk) => hunk.path === created);
+  if (!deleteHunk || !createHunk) throw new Error('missing hunks');
+  await sleep(1200);
+  await shot('p3-7-create-and-delete-review');
+  const deleteLenses = await lensDecision(deleted, deleteHunk.id, true, true);
+  check(deleteLenses.length === 2, 'a deletion gets Accept and Reject lenses: ' + deleteLenses.join(' | '));
+  await lensDecision(created, createHunk.id, true);
+  await click('.review.waiting .review-apply');
+  await running;
+  await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+  check(onDisk(created) === 'NEW = 1\n', 'the new file is on disk');
+  check(!existsSync(path.join(workspace, deleted)), 'the deleted file is gone');
+  const statusAfterApply = await gitStatus();
+
+  const undone = await vscode.commands.executeCommand<{ ok: boolean; message: string }>('forgelens.undo');
+  check(undone.ok, 'undo: ' + undone.message);
+  check(!existsSync(path.join(workspace, created)), 'undo removes the new file');
+  check(onDisk(deleted) === deletedText, 'undo restores the deleted file exactly');
+  check((await gitStatus()) === '', 'git is clean after undo: ' + (await gitStatus()));
+
+  // Reject both: nothing changes.
+  await useScripted();
+  await callMcpTool('stage_create_file', { path: created, content: 'NEW = 2\n' });
+  await callMcpTool('stage_delete_file', { path: deleted });
+  running = vscode.commands.executeCommand('forgelens.ask', 'Add and remove.');
+  await waitForReview();
+  await vscode.commands.executeCommand('forgelens.review.rejectAll');
+  await vscode.commands.executeCommand('forgelens.review.apply');
+  await running;
+  check(!existsSync(path.join(workspace, created)) && onDisk(deleted) === deletedText, 'rejected: neither file changed');
+  check((await gitStatus()) === '', 'git is clean after rejecting');
+  results['createDelete'] = { statusAfterApply, undo: undone.message, lenses: deleteLenses };
+}
+
+/** What Ctrl+Z does after a multi-file apply. The undo command is what the key runs in an editor. */
+async function scenarioCtrlZ(): Promise<void> {
+  const before = { helpers: onDisk(HELPERS), globals: onDisk(GLOBALS) };
+  const applyAll = async (): Promise<void> => {
+    await useScripted();
+    await stageThreeHunks();
+    const running = vscode.commands.executeCommand('forgelens.ask', 'Add comments.');
+    await waitForReview();
+    await vscode.commands.executeCommand('forgelens.review.acceptAll');
+    await click('.review.waiting .review-apply');
+    await running;
+    await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+    check(onDisk(HELPERS).includes('Comment one') && onDisk(GLOBALS).includes('Comment three'), 'the apply reached both files');
+  };
+  const isOpenAndDirty = (file: string): boolean =>
+    vscode.workspace.textDocuments.some((document) => document.uri.fsPath.toLowerCase() === path.join(workspace, file).toLowerCase() && document.isDirty);
+  const report: Record<string, unknown> = {};
+
+  // In an editor showing one of the edited files.
+  await applyAll();
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  const undoInEditor = async (): Promise<void> => {
+    const document = await vscode.workspace.openTextDocument(path.join(workspace, HELPERS));
+    await vscode.window.showTextDocument(document);
+    await sleep(300);
+    await vscode.commands.executeCommand('undo');
+    await waitFor('the revert to reach disk', () => onDisk(HELPERS) === before.helpers && onDisk(GLOBALS) === before.globals, 6_000);
+  };
+  await undoInEditor();
+  await sleep(500);
+  await shot('p3-8-ctrl-z-in-editor');
+  check(!isOpenAndDirty(HELPERS) && !isOpenAndDirty(GLOBALS), 'no file is left unsaved');
+  check((await gitStatus()) === '', 'Ctrl+Z in an editor reverts every file on disk: ' + (await gitStatus()));
+  const card = reviewCard((await state()).view);
+  check(card?.phase === 'undone', 'the card shows the revert: ' + String(card?.text));
+  report['inEditor'] = { result: 'every file in the apply reverted and saved', card: card?.text };
+
+  // Right after Apply, where focus is in the panel and no editor is open.
+  await applyAll();
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  await vscode.commands.executeCommand('undo');
+  await sleep(400);
+  const unfocused = await gitStatus();
+  report['noEditorNoPanelFocus'] = { result: unfocused === '' ? 'reverted' : 'nothing happens, as for any Ctrl+Z with no editor', gitStatus: unfocused };
+  await vscode.commands.executeCommand('forgelens.internal.pressCtrlZ');
+  await waitFor('the revert from the panel', async () => (await gitStatus()) === '', 6_000, 100);
+  report['inPanel'] = { result: 'every file in the apply reverted, the same as the Undo button' };
+
+  // Typing in the panel keeps its own Ctrl+Z: nothing is undone with nothing to undo.
+  await vscode.commands.executeCommand('forgelens.internal.pressCtrlZ');
+  await sleep(300);
+  check((await gitStatus()) === '', 'a second Ctrl+Z has nothing to do');
+  results['ctrlZ'] = report;
+}
+
+async function scenarioKeybindings(): Promise<void> {
+  await vscode.commands.executeCommand('workbench.action.openDefaultKeybindingsFile');
+  await waitFor('the defaults to open', () => vscode.window.activeTextEditor?.document.uri.scheme === 'vscode', 10_000);
+  const text = vscode.window.activeTextEditor?.document.getText() ?? '';
+  const lines = text.split('\n');
+  // The extension's own binding appears in this file too, so only others count.
+  const clashes = lines.flatMap((line, i) => (/"key":\s*"ctrl\+alt\+k"/.test(line) && !line.includes('forgelens.') ? [line.trim() + ' ' + (lines[i + 1] ?? '').trim()] : []));
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  const all = await vscode.commands.getCommands(true);
+  results['keybindings'] = { defaultLinesChecked: lines.length, ctrlAltKDefaults: clashes, commandRegistered: all.includes('forgelens.editSelection') };
+  check(lines.length > 500, 'the default keybindings were read');
+  check(clashes.length === 0, 'Ctrl+Alt+K is free: ' + clashes.join('; '));
+}
+
+const TASK_A_INSTRUCTION = "Treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value that is treated as false.";
+const VENV_SCRIPTS = path.join(root, '../flask/.venv/Scripts');
+const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
+const VERIFY_PY = 'from flask.helpers import get_debug_flag; print(get_debug_flag())';
+
+function verifyEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: VENV_SCRIPTS + path.delimiter + (process.env['PATH'] ?? ''), PYTHONPATH: 'src', PYTHONDONTWRITEBYTECODE: '1', ...extra };
+}
+
+/** The exact Task A checks, against the throwaway clone. */
+async function verifyTaskA(): Promise<{ passed: boolean; failures: string[]; values: Record<string, string>; pytest: string; docstring: string; flaskFrom: string; exact: string }> {
+  const failures: string[] = [];
+  const python = path.join(VENV_SCRIPTS, 'python.exe');
+  const run = async (args: string[], env: Record<string, string> = {}): Promise<string> =>
+    (await exec(python, args, { cwd: workspace, env: verifyEnv(env), timeout: 120_000 })).stdout.trim();
+
+  const flaskFrom = await run(['-c', 'import flask; print(flask.__file__)']);
+  if (!path.resolve(flaskFrom).toLowerCase().startsWith(path.resolve(workspace).toLowerCase())) failures.push('flask was not imported from the clone: ' + flaskFrom);
+
+  // Exactly as the task says, in Git Bash.
+  const exact = (await exec(GIT_BASH, ['-c', 'FLASK_DEBUG=off python -c "' + VERIFY_PY + '"'], { cwd: workspace, env: verifyEnv(), timeout: 120_000 })).stdout.trim();
+  if (exact !== 'False') failures.push('the exact command printed ' + exact);
+
+  const values: Record<string, string> = {};
+  const expected: Record<string, string> = { off: 'False', OFF: 'False', Off: 'False', n: 'False', N: 'False', '0': 'False', false: 'False', FALSE: 'False', no: 'False', NO: 'False', '1': 'True', true: 'True', yes: 'True' };
+  for (const [value, want] of Object.entries(expected)) {
+    const got = await run(['-c', VERIFY_PY], { FLASK_DEBUG: value });
+    values[value] = got;
+    if (got !== want) failures.push('FLASK_DEBUG=' + value + ' gave ' + got + ', wanted ' + want);
+  }
+
+  const docstring = await run(['-c', 'from flask.helpers import get_debug_flag; print(get_debug_flag.__doc__)']);
+  for (const word of ['0', 'false', 'no', 'off', 'n']) {
+    if (!new RegExp('(^|[^a-z0-9])' + word + '($|[^a-z0-9])', 'i').test(docstring)) failures.push('the docstring does not list ' + word);
+  }
+
+  let pytest: string;
+  try {
+    pytest = (await exec(python, ['-m', 'pytest', 'tests/test_helpers.py', '-q', '-p', 'no:cacheprovider'], { cwd: workspace, env: verifyEnv(), timeout: 180_000 })).stdout.trim().split('\n').at(-1) ?? '';
+  } catch (error) {
+    pytest = 'FAILED: ' + String((error as { stdout?: string }).stdout ?? error).trim().split('\n').slice(-3).join(' ');
+    failures.push(pytest);
+  }
+  return { passed: failures.length === 0, failures, values, pytest, docstring, flaskFrom, exact };
+}
+
+/** The same command on screen, for the screenshot. */
+async function showVerification(name: string): Promise<void> {
+  const terminal = vscode.window.createTerminal({ name: 'Task A check', shellPath: GIT_BASH, cwd: workspace, env: { PATH: VENV_SCRIPTS + path.delimiter + (process.env['PATH'] ?? ''), PYTHONPATH: 'src', PYTHONDONTWRITEBYTECODE: '1' } });
+  terminal.show();
+  await sleep(4000);
+  terminal.sendText('FLASK_DEBUG=off python -c "' + VERIFY_PY + '"');
+  await sleep(3500);
+  terminal.sendText('for v in OFF n N 0 false no 1 true yes; do echo "$v: $(FLASK_DEBUG=$v python -c "' + VERIFY_PY + '")"; done');
+  await sleep(9000);
+  terminal.sendText('python -m pytest tests/test_helpers.py -q -p no:cacheprovider 2>&1 | tail -1');
+  await sleep(6000);
+  await shot(name);
+  terminal.dispose();
+  await vscode.commands.executeCommand('workbench.action.closePanel');
+}
+
+/** Opens helpers.py with get_debug_flag selected, exactly as Task A starts. */
+async function selectGetDebugFlag(): Promise<{ startLine: number; endLine: number }> {
+  const document = await vscode.workspace.openTextDocument(path.join(workspace, HELPERS));
+  const editor = await vscode.window.showTextDocument(document, { preview: false });
+  const lines = document.getText().split(/\r?\n/);
+  const start = lines.findIndex((line) => line.startsWith('def get_debug_flag'));
+  let end = start;
+  for (let i = start + 1; i < lines.length && (lines[i]?.startsWith(' ') || lines[i]?.trim() === ''); i += 1) {
+    if (lines[i]?.trim()) end = i;
+  }
+  editor.selection = new vscode.Selection(start, 0, end, (lines[end] ?? '').length);
+  editor.revealRange(editor.selection, vscode.TextEditorRevealType.InCenter);
+  return { startLine: start + 1, endLine: end + 1 };
+}
+
+const inputBoxWait = 500;
+
+/** Returns the run inside an object: an async function returning a thenable would wait for it to finish. */
+async function startInline(instruction: string, shotName?: string): Promise<{ running: Thenable<unknown> }> {
+  const running = vscode.commands.executeCommand('forgelens.editSelection');
+  await sleep(inputBoxWait);
+  if (shotName) await shot(shotName);
+  await vscode.commands.executeCommand('forgelens.internal.answerInput', instruction);
+  return { running };
+}
+
+const taskAEdits = {
+  path: HELPERS,
+  edits: [
+    {
+      old_text: 'return bool(val and val.lower() not in {"0", "false", "no"})',
+      new_text: 'return bool(val and val.lower() not in {"0", "false", "no", "nope", "nah"})',
+    },
+    {
+      old_text: 'The default is \x60\x60False\x60\x60.',
+      new_text: 'The default is \x60\x60False\x60\x60.\n    The values \x60nope\x60 and \x60nah\x60 count as false too.',
+    },
+  ],
+};
+
+async function acceptAndApply(): Promise<void> {
+  await vscode.commands.executeCommand('forgelens.review.acceptAll');
+  const applied = await click('.review.waiting .review-apply');
+  check(applied.clicked, 'Apply was visible and clicked');
+}
+
+async function undoToClean(): Promise<void> {
+  const undone = await vscode.commands.executeCommand<{ ok: boolean; message: string }>('forgelens.undo');
+  check(undone.ok, 'undo: ' + undone.message);
+  check((await gitStatus()) === '', 'git is clean after undo: ' + (await gitStatus()));
+}
+
+/** Task A end to end with a scripted agent: every step except the model is real. */
+async function scenarioInline(): Promise<void> {
+  const original = onDisk(HELPERS);
+  let prompt = '';
+  await useScripted({ onPrompt: (text) => (prompt = text), beforeCall: async () => void (await callMcpTool('stage_edit', taskAEdits)) });
+  const lines = await selectGetDebugFlag();
+  const { running } = await startInline(TASK_A_INSTRUCTION, 'p3-1-input-at-selection');
+  await waitForReview();
+  await sleep(1200);
+  await shot('p3-2-task-a-review');
+
+  check(prompt.includes('File: ' + HELPERS), 'the prompt names the file');
+  check(prompt.includes('Selected lines: ' + String(lines.startLine) + '-' + String(lines.endLine)), 'the prompt gives the lines: ' + prompt.slice(0, 120));
+  check(prompt.includes(TASK_A_INSTRUCTION), 'the prompt has the instruction word for word');
+  check(prompt.includes('def get_debug_flag() -> bool:'), 'the prompt has the selected code');
+  check(prompt.includes('def get_load_dotenv'), 'the prompt has the code after it');
+  const shown = (await state()).view.items.find((item) => item.kind === 'user');
+  check(shown?.kind === 'user' && !shown.text.includes('Selected code'), 'the panel shows the short text');
+
+  await acceptAndApply();
+  await running;
+  await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+  const verification = await verifyTaskA();
+  await showVerification('p3-4-verification-output');
+  check(verification.passed, 'Task A checks: ' + verification.failures.join('; '));
+  check((await gitStatus()).includes('helpers.py'), 'only helpers.py changed: ' + (await gitStatus()));
+  await undoToClean();
+  check(onDisk(HELPERS) === original, 'undo restored the file');
+  results['inline'] = { lines, verification };
+}
+
+async function scenarioInlineFallback(): Promise<void> {
+  const original = onDisk(HELPERS);
+  const code = 'def get_debug_flag() -> bool:\n    """Get the debug flag. False for 0, false, no, nope and nah."""\n    val = os.environ.get("FLASK_DEBUG")\n    return bool(val and val.lower() not in {"0", "false", "no", "nope", "nah"})';
+  await useScripted({ textAnswer: 'Here is the updated function:\n\n\x60\x60\x60python\n' + code + '\n\x60\x60\x60\n\nThis treats nope and nah as false.' });
+  await selectGetDebugFlag();
+  const { running } = await startInline(TASK_A_INSTRUCTION);
+  await waitForReview();
+  await sleep(1200);
+  await shot('p3-3-fallback-review');
+  const card = reviewCard((await state()).view);
+  check((card?.warning ?? '').includes('plain text'), 'the card says the fallback was used: ' + String(card?.warning));
+  check(onDisk(HELPERS) === original, 'nothing is on disk yet');
+  await acceptAndApply();
+  await running;
+  await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+  const after = onDisk(HELPERS);
+  const finalStatus = (await state()).view.status;
+  check(after.includes('"nope", "nah"') && after.includes('def get_load_dotenv'), 'the selection was replaced and the rest kept');
+  check(finalStatus === 'done', 'the run finished: ' + finalStatus);
+  await undoToClean();
+
+  // A text answer with nothing usable says so and changes nothing.
+  await useScripted({ textAnswer: 'I cannot help with that.' });
+  await selectGetDebugFlag();
+  await (await startInline(TASK_A_INSTRUCTION)).running;
+  const refused = await state();
+  check(refused.view.status === 'error' && (refused.view.error ?? '').includes('did not propose a change'), 'a clear message: ' + String(refused.view.error));
+  check((await gitStatus()) === '', 'git stays clean');
+  results['inlineFallback'] = { note: card?.warning, refused: refused.view.error };
+}
+
+async function scenarioInlineCancel(): Promise<void> {
+  // Esc while waiting on the model. The stop command is what the Esc binding runs.
+  await useScripted({ waitBeforeCallMs: 60_000 });
+  await selectGetDebugFlag();
+  let { running } = await startInline(TASK_A_INSTRUCTION);
+  await waitFor('the wait count', async () => /Waiting for the model… \d+ s/.test((await state()).view.statusText), 8_000, 100);
+  await shot('p3-5-progress-at-selection');
+  await vscode.commands.executeCommand('forgelens.stop');
+  await running;
+  let { view } = await state();
+  check(view.status === 'cancelled' && view.statusText === 'Cancelled, workspace unchanged', 'stopped while waiting: ' + view.statusText);
+  check((await gitStatus()) === '', 'git is clean');
+
+  // The panel's Stop during the review.
+  await useScripted({ beforeCall: async () => void (await callMcpTool('stage_edit', taskAEdits)) });
+  await selectGetDebugFlag();
+  ({ running } = await startInline(TASK_A_INSTRUCTION));
+  await waitForReview();
+  await vscode.commands.executeCommand('forgelens.review.acceptAll');
+  const stop = await click('#stop');
+  await running;
+  await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+  ({ view } = await state());
+  check(stop.clicked && stop.reactionMs < 100, 'Stop reacted within 100 ms');
+  check(view.status === 'cancelled', 'stopped during review: ' + view.status);
+  check((await gitStatus()) === '', 'git is clean after Stop during review');
+
+  // Esc in the input box runs nothing.
+  const canceled = vscode.commands.executeCommand('forgelens.editSelection');
+  await sleep(inputBoxWait);
+  await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
+  await canceled;
+  check(!(await state()).busy, 'cancelling the input starts nothing');
+  results['inlineCancel'] = { reactionMs: stop.reactionMs, gitStatus: await gitStatus() };
+}
+
+async function scenarioInlineMentions(): Promise<void> {
+  let prompt = '';
+  await useScripted({ onPrompt: (text) => (prompt = text), textAnswer: 'No change.' });
+  await selectGetDebugFlag();
+  await (await startInline('Follow the style of @file:src/flask/globals.py and @symbol:get_load_dotenv and @file:nope.py please')).running;
+  check(prompt.includes('Mentioned by you, file src/flask/globals.py'), 'a file mention is included');
+  check(prompt.includes('_no_app_msg'), 'with its content');
+  check(prompt.includes('Mentioned by you, symbol get_load_dotenv'), 'a symbol mention is included');
+  check(prompt.includes('Not found in the workspace: nope.py'), 'a missing mention is reported');
+  results['inlineMentions'] = { ok: true };
+}
+
+async function totalModelMessages(sessionUrl: string | undefined): Promise<number | undefined> {
+  const id = sessionUrl?.split('/').pop();
+  if (!id) return undefined;
+  const response = await fetch('http://localhost:8790/api/v1/sessions/' + id + '/events?limit=100');
+  if (!response.ok) return undefined;
+  const { data } = (await response.json()) as { data: { type: string }[] };
+  return data.filter((event) => event.type === 'model.message').length;
+}
+
+/** The exact Task A on a real model, three times, rotating on a quota error. */
+async function scenarioTaskALive(): Promise<void> {
+  await vscode.commands.executeCommand('forgelens.internal.useSessions', undefined);
+  const models = (process.env['FORGELENS_E2E_MODELS'] ?? 'google-gemini/gemini-flash-lite-latest').split(',');
+  const budget = Number(process.env['FORGELENS_E2E_REQUEST_BUDGET'] ?? 28);
+  const settings = vscode.workspace.getConfiguration('forgelens');
+  const runs: Record<string, unknown>[] = [];
+  let modelIndex = 0;
+  let spent = 0;
+  let passes = 0;
+
+  for (let run = 1; run <= 3 && spent < budget - 4; run += 1) {
+    if (run > 1) await sleep(GAP_MS);
+    let finished = false;
+    while (!finished && modelIndex < models.length) {
+      const model = models[modelIndex] as string;
+      await settings.update('models', [model], vscode.ConfigurationTarget.Global);
+      await sleep(1500);
+      await newChat();
+      await waitFor('earlier diff tabs to close', () => diffTabs().length === 0, 10_000);
+      await selectGetDebugFlag();
+      const asked = Date.now();
+      const running = Promise.resolve((await startInline(TASK_A_INSTRUCTION)).running);
+      await waitFor(
+        'the review or an end',
+        async () => {
+          const current = await state();
+          return !current.busy || (current.view.status === 'awaiting-approval' && reviewCard(current.view)?.phase === 'reviewing' && diffTabs().length > 0);
+        },
+        300_000,
+        200,
+      );
+      const paused = await state();
+      if (!paused.busy) {
+        const requests = await totalModelMessages(paused.view.sessionUrl);
+        spent += requests ?? 1;
+        const quota = /429|quota/i.test(paused.view.error ?? '');
+        runs.push({ run, model, result: quota ? 'quota' : 'failed', error: paused.view.error, seconds: (Date.now() - asked) / 1000, requests, sessionUrl: paused.view.sessionUrl });
+        if (quota) {
+          modelIndex += 1;
+          continue;
+        }
+        finished = true;
+        continue;
+      }
+
+      const reviewedHunks = await hunks();
+      const note = reviewCard(paused.view)?.warning;
+      const touched = [...new Set(reviewedHunks.map((hunk) => hunk.path))];
+      await sleep(1200);
+      if (run === 1) await shot('p3-6-live-task-a-review');
+      await acceptAndApply();
+      await Promise.race([running, sleep(180_000)]);
+      await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+      const after = await state();
+      const seconds = (Date.now() - asked) / 1000;
+      const verification = await verifyTaskA();
+      if (run === 1) await showVerification('p3-9-live-verification-output');
+      const diff = (await exec('git', ['-C', workspace, 'diff', '--', HELPERS])).stdout;
+      const requests = await totalModelMessages(after.view.sessionUrl);
+      spent += requests ?? 4;
+      const onlySelection = touched.length === 1 && touched[0] === HELPERS;
+      const passed = verification.passed && onlySelection && after.view.status === 'done';
+      if (passed) passes += 1;
+      runs.push({
+        run,
+        model,
+        result: passed ? 'pass' : 'fail',
+        seconds,
+        requests,
+        fallbackUsed: Boolean(note),
+        note,
+        hunks: reviewedHunks.length,
+        touched,
+        status: after.view.status,
+        error: after.view.error,
+        card: reviewCard(after.view)?.text,
+        answer: textOf(after.view),
+        verification,
+        diff,
+        sessionUrl: after.view.sessionUrl,
+      });
+      await vscode.commands.executeCommand('forgelens.undo');
+      if ((await gitStatus()) !== '') await exec('git', ['-C', workspace, 'checkout', '--', '.']);
+      finished = true;
+    }
+    if (modelIndex >= models.length) break;
+  }
+  results['taskALive'] = { passes, spent, runs };
+  await settings.update('models', undefined, vscode.ConfigurationTarget.Global);
+  check(passes > 0, 'at least one live pass: ' + JSON.stringify(runs.map((item) => ({ run: item['run'], result: item['result'], error: item['error'] }))));
+}
+
 /** Closes the window mid-run. launch.mjs then asks TrueForge whether the turn was stopped. */
 async function scenarioClose(): Promise<void> {
   await newChat();
@@ -725,6 +1192,14 @@ export async function run(): Promise<void> {
       crlf: scenarioCrlf,
       'close-scripted': scenarioCloseScripted,
       live: scenarioLive,
+      'create-delete': scenarioCreateDelete,
+      'ctrl-z': scenarioCtrlZ,
+      keybindings: scenarioKeybindings,
+      inline: scenarioInline,
+      'inline-fallback': scenarioInlineFallback,
+      'inline-cancel': scenarioInlineCancel,
+      'inline-mentions': scenarioInlineMentions,
+      'task-a-live': scenarioTaskALive,
       offline: scenarioOffline,
       close: scenarioClose,
     };
@@ -736,14 +1211,19 @@ export async function run(): Promise<void> {
         // A slow provider must show up as a failure, not as a test that never ends.
         await Promise.race([
           scenario(),
-          sleep(SCENARIO_LIMIT_MS).then(() => {
-            throw new Error(`no result after ${SCENARIO_LIMIT_MS / 1000} s`);
+          sleep(name === 'task-a-live' ? TASK_A_LIMIT_MS : SCENARIO_LIMIT_MS).then(() => {
+            throw new Error(`no result in scenario ${name}`);
           }),
         ]);
       } catch (error) {
         await vscode.commands.executeCommand('forgelens.stop');
         failures.push(`${name}: ${String(error)}`);
         await shot(`failed-${name}`);
+        // One failure must not be reported again by every scenario after it.
+        await newChat();
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await exec('git', ['-C', workspace, 'checkout', '--', '.']);
+        await exec('git', ['-C', workspace, 'clean', '-fdq']);
       }
       // Free-tier models allow few requests per minute, so live scenarios need room between them.
       if (['ask', 'stream', 'stop'].includes(name) && name !== scenarios.at(-1)) await sleep(GAP_MS);
