@@ -3,7 +3,7 @@
   "displayName": "ForgeLens",
   "description": "A coding agent for VS Code whose agent loop runs on TrueForge. Nothing touches disk until a human accepts a hunk, and the agent always shows what it read and why.",
   "version": "0.0.1",
-  "publisher": "hackbuddy1",
+  "publisher": "rajsrivastava3",
   "license": "MIT",
   "private": true,
   "repository": {
