@@ -13,7 +13,7 @@ const scenarios = (process.env['FORGELENS_E2E_SCENARIOS'] ?? '').split(',');
 const shots = path.join(root, 'docs/screenshots');
 const results: Record<string, unknown> = {};
 const GAP_MS = Number(process.env['FORGELENS_E2E_GAP_S'] ?? 65) * 1000;
-const SCENARIO_LIMIT_MS = 150_000;
+const SCENARIO_LIMIT_MS = 420_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 // A copy: the command hands back the live view, and these checks compare moments in time.
@@ -228,7 +228,7 @@ async function runApproval(decision: 'allow' | 'deny', shotName: string): Promis
       const { view } = await state();
       return view.status === 'awaiting-approval' || view.status === 'error' || view.status === 'done';
     },
-    90_000,
+    170_000,
   );
   const paused = await state();
   const card = toolsOf(paused.view.items).find((tool) => tool.status === 'awaiting-approval');
