@@ -8,7 +8,11 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/hackbuddy1/forgelens.git"
+    "url": "https://github.com/rajsrivastava3/forgelens.git"
+  },
+  "homepage": "https://github.com/rajsrivastava3/forgelens#readme",
+  "bugs": {
+    "url": "https://github.com/rajsrivastava3/forgelens/issues"
   },
   "engines": {
     "vscode": "^1.90.0",
