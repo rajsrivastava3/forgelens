@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Blocks commits whose staged additions look like API keys. Enabled by `npm install` (prepare script).
+set -u
+pattern='AIza[0-9A-Za-z_-]{30,}|gsk_[0-9A-Za-z]{20,}|sk-[0-9A-Za-z_-]{20,}|tfy-[0-9A-Za-z_-]{20,}'
+if git diff --cached --no-color -U0 --diff-filter=ACMR | grep -E '^\+' | grep -Eq "$pattern"; then
+  echo "pre-commit: staged changes look like they contain an API key. Commit blocked." >&2
+  exit 1
+fi
