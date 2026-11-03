@@ -103,6 +103,13 @@ Groq says those may be discontinued at short notice.
   a different provider also survives a Gemini outage. `gemini-3-1-flash-lite` passed the read test and could
   stand in, but it uses the same key and may share quota with the primary.
 
+## Throttling seen during panel testing
+
+Later the same evening, `gemini-flash-lite-latest` slowed sharply. The same question took 7 to 9 s early on
+and 127 s later, with each model step taking about 45 s and no error reported. Sometimes it returned a 429
+per-minute error instead. The cause is not confirmed; heavy use that day and provider rate limiting are the
+likely explanations. Rehearsals on a free key can therefore be much slower than a single good run suggests.
+
 ## What this means
 
 - The extension cannot assume a named model is usable on a given day, so ModelChain needs to treat 429
