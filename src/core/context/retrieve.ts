@@ -63,7 +63,15 @@ function describe(candidate: Candidate, rarity: (word: string) => number): strin
   // What a code file defines says more than which doc pointed at it. A test's own name adds nothing to its pairing.
   const defined = isCode ? [...new Set(candidate.names.map((name) => name.split('.')[0] ?? name))].slice(0, MAX_NAMES) : [];
   if (defined.length > 0) parts.push(`defines ${defined.join(', ')}`);
-  const relations = defined.length > 0 ? candidate.relations.filter((relation) => !relation.startsWith('code for ')) : candidate.relations;
+  const relevant = defined.length > 0 ? candidate.relations.filter((relation) => !relation.startsWith('the code ')) : candidate.relations;
+  // Two relations to the same file say the same thing twice: "test pair of cli.py; imports cli.py".
+  const seen = new Set<string>();
+  const relations = relevant.filter((relation) => {
+    const file = /\S+\.\w+/.exec(relation)?.[0] ?? relation;
+    if (seen.has(file)) return false;
+    seen.add(file);
+    return true;
+  });
   parts.push(...relations.slice(0, 2));
   // The rarest words explain the choice best. A joined form such as built-in only repeats its parts.
   const matched = [...candidate.matched]
