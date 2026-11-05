@@ -346,7 +346,7 @@ describe('describeTurnError for billing', () => {
     expect(describeTurnError(raw)).toMatchObject({
       kind: 'billing',
       httpStatus: 402,
-      message: 'The model provider refused the request for billing reasons (402) : Your prepayment credits are depleted.',
+      message: 'The model provider refused the request for billing reasons (402): Your prepayment credits are depleted.',
     });
   });
 });

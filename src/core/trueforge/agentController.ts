@@ -1,16 +1,23 @@
 import type { ReviewCard } from '../changeset/reviewFlow';
 import type { ContextCard } from '../context/agentPrompt';
 import { AgentRun, STOPPED_DURING_APPROVAL, type ApprovalDecision } from './agentRun';
-import { describeTurnError, isConnectionFailure, trueForgeUnreachableMessage } from './errors';
+import { describeTurnError, failureAction, isConnectionFailure, shortReason, trueForgeUnreachableMessage, type DescribedTurnError } from './errors';
 import { RunViewBuilder, type RunView } from './runView';
-import type { PendingApproval, SessionsApi, TurnEvent } from './turnRunner';
+import type { PendingApproval, SessionsApi, TurnEvent, TurnOutcome } from './turnRunner';
 
 export interface AgentControllerOptions {
   baseUrl: () => string;
   agentName: string;
   sessions: () => SessionsApi;
-  /** Creates a session for the named saved agent and returns its id. */
-  createSession: (agentName: string) => Promise<string>;
+  /** Creates a session for the named agent on this model and returns its id. */
+  createSession: (agentName: string, model: string) => Promise<string>;
+  /** Models to try, in order. The first is the primary. Defaults to the model setup chose. */
+  models?: () => readonly string[];
+  /** No model output within this long ends the attempt as a timeout. Only before the first output. */
+  firstTokenMs?: number;
+  /** Waits before each retry of the same model. Jitter is added. */
+  retryDelaysMs?: readonly number[];
+  sleep?: (ms: number) => Promise<void>;
   /** Runs before each request, so a stale or missing setup is fixed or explained. Returns the model. */
   ensureReady: () => Promise<string>;
   onChange: () => void;
@@ -55,6 +62,8 @@ export class AgentController {
   private busy = false;
   private readonly waiting = new Map<string, WaitingApproval>();
   private heartbeat: ReturnType<typeof setInterval> | undefined;
+  private model: string | undefined;
+  private wakeFromSleep: (() => void) | undefined;
 
   constructor(private readonly options: AgentControllerOptions) {
     this.builder = new RunViewBuilder(options.now);
@@ -66,6 +75,11 @@ export class AgentController {
 
   get isBusy(): boolean {
     return this.busy;
+  }
+
+  /** The model of the current or last request, which differs from the primary after a fallback. */
+  get activeModel(): string | undefined {
+    return this.model;
   }
 
   setModel(model: string | undefined): void {
@@ -105,45 +119,15 @@ export class AgentController {
     }
 
     try {
-      // A session keeps the model it started with, so a switch needs a new one.
-      if (!this.sessionId || model !== this.sessionModel || agentName !== this.sessionAgent || sendOptions.freshSession) {
-        this.sessionId = await this.options.createSession(agentName);
-        this.sessionModel = model;
-        this.sessionAgent = agentName;
-      }
-      this.builder.setSession(model, `${this.options.baseUrl()}/sessions/${this.sessionId}`);
-      this.options.onChange();
-
-      if (this.stopRequested) {
-        this.builder.applyOutcome({ status: 'cancelled', reason: 'client-cancelled' });
-        return;
-      }
       let prompt = message;
       if (sendOptions.prepare) {
         const prepared = await sendOptions.prepare(message);
         prompt = prepared.prompt;
         if (prepared.card) this.builder.contextCard(prepared.card);
         this.options.onChange();
-        if (this.stopRequested) {
-          this.builder.applyOutcome({ status: 'cancelled', reason: 'client-cancelled' });
-          return;
-        }
       }
-      this.run = new AgentRun({
-        sessions: this.options.sessions(),
-        sessionId: this.sessionId,
-        baseUrl: this.options.baseUrl(),
-        view: this.builder,
-        decide: (approval, signal) => this.waitForDecision(approval, signal),
-        onChange: this.options.onChange,
-        ...(this.options.onEvent ? { onEvent: this.options.onEvent } : {}),
-      });
-      const outcome = await this.run.send(prompt);
-      if (outcome.status === 'cancelled' || outcome.status === 'error') this.options.discardStaged?.();
-      if (outcome.status === 'cancelled' && outcome.reason === STOPPED_DURING_APPROVAL) this.sessionId = undefined;
-      if (outcome.status === 'done' && sendOptions.afterTurn && !this.stopRequested) {
-        await this.runAfterTurn(outcome.output, sendOptions.afterTurn);
-      }
+      const chain = [...new Set([model, ...(this.options.models?.() ?? [])])].filter((name, index, all) => index === 0 || all.indexOf(name) === index);
+      await this.runChain(chain, agentName, prompt, sendOptions);
     } catch (error) {
       this.options.discardStaged?.();
       const raw = error instanceof Error ? error.message : String(error);
@@ -155,6 +139,128 @@ export class AgentController {
       this.waiting.clear();
       this.options.onChange();
     }
+  }
+
+  /** Tries each model in turn, retrying the ones whose failure may pass. The same prompt and Context Pack go to each. */
+  private async runChain(chain: readonly string[], agentName: string, prompt: string, sendOptions: SendOptions): Promise<void> {
+    const delays = this.options.retryDelaysMs ?? [1_000, 3_000];
+    for (let index = 0; index < chain.length; index += 1) {
+      const model = chain[index] as string;
+      for (let attempt = 0; ; attempt += 1) {
+        if (this.stopRequested) {
+          this.builder.applyOutcome({ status: 'cancelled', reason: 'client-cancelled' });
+          return;
+        }
+        const fresh = index > 0 || attempt > 0 || sendOptions.freshSession === true;
+        const result = await this.attempt(model, agentName, prompt, fresh);
+        if (result.kind === 'outcome') {
+          const { outcome } = result;
+          if (outcome.status === 'cancelled' || outcome.status === 'error') this.options.discardStaged?.();
+          if (outcome.status === 'cancelled' && outcome.reason === STOPPED_DURING_APPROVAL) this.sessionId = undefined;
+          if (outcome.status === 'done' && sendOptions.afterTurn && !this.stopRequested) {
+            await this.runAfterTurn(outcome.output, sendOptions.afterTurn);
+          }
+          return;
+        }
+
+        // The attempt failed. Whatever it staged will never be reviewed.
+        this.options.discardStaged?.();
+        const { error } = result;
+        const action = failureAction(error);
+        if (action === 'stop') {
+          this.builder.fail(error.message);
+          return;
+        }
+        if (action === 'retry' && attempt < delays.length) {
+          const wait = Math.round((delays[attempt] ?? 1_000) * (0.8 + Math.random() * 0.4));
+          this.builder.retrying(`${model}: ${shortReason(error)}. Trying again in ${Math.max(1, Math.round(wait / 1000))} s…`);
+          this.options.onChange();
+          await this.pause(wait);
+          continue;
+        }
+        const next = chain[index + 1];
+        if (next) {
+          const who = index === 0 ? 'Primary model' : `Fallback model ${model}`;
+          this.builder.fallback(`${who} failed: ${shortReason(error)}. Switched to ${next} automatically.`);
+          this.options.onChange();
+          break;
+        }
+        this.builder.fail(
+          chain.length > 1 ? `Every configured model failed. The last, ${model}: ${error.message}` : error.message,
+          'switch-model',
+        );
+        return;
+      }
+    }
+  }
+
+  /** One request to one model. A failure the chain can act on comes back as an error, not an outcome. */
+  private async attempt(
+    model: string,
+    agentName: string,
+    prompt: string,
+    fresh: boolean,
+  ): Promise<{ kind: 'outcome'; outcome: TurnOutcome } | { kind: 'failed'; error: DescribedTurnError }> {
+    this.model = model;
+    // A session keeps the model it started with, so a switch needs a new one.
+    if (fresh || !this.sessionId || model !== this.sessionModel || agentName !== this.sessionAgent) {
+      this.sessionId = await this.options.createSession(agentName, model);
+      this.sessionModel = model;
+      this.sessionAgent = agentName;
+    }
+    this.builder.setSession(model, `${this.options.baseUrl()}/sessions/${this.sessionId}`);
+    this.options.onChange();
+
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const run = new AgentRun({
+      sessions: this.options.sessions(),
+      sessionId: this.sessionId,
+      baseUrl: this.options.baseUrl(),
+      view: this.builder,
+      decide: (approval, signal) => this.waitForDecision(approval, signal),
+      onChange: this.options.onChange,
+      onEvent: (event) => {
+        // The first output proves the model is answering; after that, slowness is not a failure.
+        if (timer && event.type === 'model.message' && ((event.toolCalls?.length ?? 0) > 0 || (typeof event.content === 'string' && event.content.length > 0))) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        if (timer && event.type === 'model.message.delta') {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        this.options.onEvent?.(event);
+      },
+    });
+    this.run = run;
+    if (this.options.firstTokenMs) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        void run.cancelForRetry();
+      }, this.options.firstTokenMs);
+    }
+    try {
+      const outcome = await run.send(prompt);
+      if (timedOut && !this.stopRequested) {
+        return { kind: 'failed', error: { kind: 'timeout', httpStatus: undefined, message: `${model} did not answer within ${Math.round((this.options.firstTokenMs ?? 0) / 1000)} s.`, raw: 'first-token timeout' } };
+      }
+      if (outcome.status === 'error') return { kind: 'failed', error: outcome.error };
+      return { kind: 'outcome', outcome };
+    } finally {
+      clearTimeout(timer);
+      this.run = undefined;
+    }
+  }
+
+  private pause(ms: number): Promise<void> {
+    const sleep = this.options.sleep ?? ((wait: number) => new Promise<void>((resolve) => setTimeout(resolve, wait)));
+    return new Promise<void>((resolve) => {
+      this.wakeFromSleep = resolve;
+      void sleep(ms).then(() => resolve());
+    }).then(() => {
+      this.wakeFromSleep = undefined;
+    });
   }
 
   private async runAfterTurn(output: string, afterTurn: NonNullable<SendOptions['afterTurn']>): Promise<void> {
@@ -174,6 +280,7 @@ export class AgentController {
     this.options.onChange();
     this.options.discardStaged?.();
     this.afterTurnStop?.abort();
+    this.wakeFromSleep?.();
     return this.run?.stop() ?? Promise.resolve();
   }
 

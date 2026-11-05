@@ -114,12 +114,12 @@ describe('AgentController per-request options', () => {
     await instance.send('panel question');
     await instance.send('long prompt with the selection in it', { agentName: 'forgelens-inline', display: 'Edit a.py', freshSession: true });
     expect(createSession).toHaveBeenCalledTimes(2);
-    expect(createSession).toHaveBeenLastCalledWith('forgelens-inline');
+    expect(createSession).toHaveBeenLastCalledWith('forgelens-inline', 'p/m');
     expect(instance.view.items.filter((item) => item.kind === 'user').at(-1)).toMatchObject({ text: 'Edit a.py' });
     expect(sessions.inputs[1]?.[0]).toMatchObject({ content: 'long prompt with the selection in it' });
     await instance.send('back to the panel');
     expect(createSession).toHaveBeenCalledTimes(3);
-    expect(createSession).toHaveBeenLastCalledWith('forgelens-agent');
+    expect(createSession).toHaveBeenLastCalledWith('forgelens-agent', 'p/m');
   });
 
   it('runs afterTurn with the final text, stays busy meanwhile, and shows a returned problem', async () => {
@@ -184,13 +184,15 @@ describe('AgentController prepare', () => {
     const sessions = replaySessions([]);
     const { instance } = controller(sessions);
     let release: () => void = () => undefined;
+    let preparing = false;
     const sending = instance.send('go', {
       prepare: () =>
         new Promise((resolve) => {
+          preparing = true;
           release = () => resolve({ prompt: 'x' });
         }),
     });
-    await vi.waitFor(() => expect(instance.view.sessionUrl).toBeDefined());
+    await vi.waitFor(() => expect(preparing).toBe(true));
     await instance.stop();
     release();
     await sending;

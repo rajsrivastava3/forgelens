@@ -58,6 +58,8 @@ export interface NoticeItem {
   kind: 'notice';
   id: string;
   text: string;
+  /** A fallback is a warning: something failed, though the work goes on. */
+  tone?: 'info' | 'warning';
 }
 
 export type ViewItem = ToolItem | TextItem | UserItem | ThreadItem | ReviewItem | ContextItem | NoticeItem;
@@ -67,6 +69,8 @@ export interface RunView {
   /** Short status line under the transcript. */
   statusText: string;
   error: string | undefined;
+  /** Offered with the error, such as a button to pick another model. */
+  errorAction?: 'switch-model' | undefined;
   model: string | undefined;
   sessionUrl: string | undefined;
   items: ViewItem[];
@@ -137,6 +141,7 @@ export class RunViewBuilder {
     this.turnCounter += 1;
     this.view.items.push({ kind: 'user', id: `user-${this.turnCounter}`, text });
     this.view.error = undefined;
+    this.view.errorAction = undefined;
     this.appliedText = undefined;
     this.waitingSince = this.now();
     this.setStatus('running', WAITING_TEXT);
@@ -147,6 +152,29 @@ export class RunViewBuilder {
     if (this.waitingSince === undefined || this.view.status !== 'running') return;
     const seconds = Math.floor((this.now() - this.waitingSince) / 1000);
     this.setStatus('running', seconds >= 1 ? `${WAITING_TEXT} ${seconds} s` : WAITING_TEXT);
+  }
+
+  /** The same model will be asked again after a wait. */
+  retrying(text: string): void {
+    this.view.error = undefined;
+    this.settleTools();
+    this.addNotice(text, 'info');
+    this.setStatus('running', text);
+  }
+
+  /** A clear banner that another model has taken over, with no action needed. */
+  fallback(text: string): void {
+    this.view.error = undefined;
+    this.settleTools();
+    this.addNotice(text, 'warning');
+    this.setStatus('running', 'Waiting for the model…');
+  }
+
+  private noticeCount = 0;
+
+  private addNotice(text: string, tone: 'info' | 'warning'): void {
+    this.noticeCount += 1;
+    this.view.items.push({ kind: 'notice', id: `notice-${this.turnCounter}-${this.noticeCount}`, text, tone });
   }
 
   /** Shows what the Context Pack holds, right under the request it belongs to. */
@@ -251,10 +279,11 @@ export class RunViewBuilder {
     }
   }
 
-  fail(message: string): void {
+  fail(message: string, action?: 'switch-model'): void {
     this.settleTools();
     this.waitingSince = undefined;
     this.view.error = message;
+    this.view.errorAction = action;
     this.setStatus('error', this.failureText());
   }
 
@@ -276,6 +305,7 @@ export class RunViewBuilder {
   private setStatus(status: RunStatus, statusText: string): void {
     // Once the user pressed Stop, in-flight events must not flip the status back.
     if (this.view.status === 'stopping' && status !== 'cancelled' && status !== 'error' && status !== 'done') return;
+    // A switch to another model means the run goes on, even after the failed attempt said it ended.
     this.view.status = status;
     this.view.statusText = statusText;
   }

@@ -67,6 +67,11 @@ export class AgentRun {
     return outcome;
   }
 
+  /** Ends the turn without the user's Stop, for a retry or a switch to another model. */
+  cancelForRetry(): Promise<void> {
+    return this.runner.cancel();
+  }
+
   /**
    * The view shows "Stopping…" straight away and the stream then ends by itself. The promise settles once
    * the server has been asked, so a closing editor can wait for that much.
