@@ -28,6 +28,57 @@ export const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
 export const BASE_URL = process.env['TRUEFORGE_BASE_URL'] ?? 'http://localhost:8790';
 const MCP_PORT = Number(process.env['FORGELENS_MCP_PORT'] ?? 8799);
 const MIN_FREE_RAM_MB = 1000;
+
+/**
+ * USD per million tokens, from Google's published paid-tier prices (checked 6 Nov 2026, valid to 31 Dec 2026).
+ * TrueForge reports no cost for these models, so cost is worked out here. Reasoning tokens are added to output
+ * as well, which may count them twice: an estimate that can only run high. Unlisted models count as free.
+ */
+const PRICES: Record<string, { input: number; output: number }> = {
+  'google-gemini/gemini-3-8-flash': { input: 0.75, output: 3.75 },
+  'google-gemini/gemini-3-6-flash': { input: 0.75, output: 3.75 },
+};
+/** A high exchange rate, so the rupee cap is reached early rather than late. */
+export const INR_PER_USD = 90;
+const SPEND_FILE = path.join(path.resolve(__dirname, '../..'), 'out', 'spend.json');
+const SPEND_CAP_INR = Number(process.env['FORGELENS_SPEND_CAP_INR'] ?? 150);
+
+export function estimateCostUsd(model: string, tokensIn: number, tokensOut: number, reasoning: number): number {
+  const price = PRICES[model];
+  return price ? (tokensIn * price.input + (tokensOut + reasoning) * price.output) / 1_000_000 : 0;
+}
+
+export function spentInr(): number {
+  try {
+    return (JSON.parse(readFileSync(SPEND_FILE, 'utf8')) as { inr: number }).inr;
+  } catch {
+    return 0;
+  }
+}
+
+export function addSpend(usd: number, label: string): number {
+  const total = spentInr() + usd * INR_PER_USD;
+  let log: { inr: number; entries: { label: string; inr: number; at: string }[] } = { inr: 0, entries: [] };
+  try {
+    log = JSON.parse(readFileSync(SPEND_FILE, 'utf8')) as typeof log;
+  } catch {
+    // First entry.
+  }
+  log.inr = total;
+  log.entries.push({ label, inr: usd * INR_PER_USD, at: new Date().toISOString() });
+  mkdirSync(path.dirname(SPEND_FILE), { recursive: true });
+  writeFileSync(SPEND_FILE, JSON.stringify(log, null, 2));
+  return total;
+}
+
+/** Stops before a run that would start over the cap. */
+export function checkSpend(): void {
+  const spent = spentInr();
+  if (spent >= SPEND_CAP_INR) {
+    console.error(`Stopped: Rs ${spent.toFixed(2)} spent in this run, at or over the Rs ${SPEND_CAP_INR} cap.`);
+    process.exit(5);
+  }
+}
 const MIN_FREE_DISK_GB = 2;
 
 export function arg(flag: string): string | undefined {
@@ -147,6 +198,7 @@ export async function startHarness(workspace: string, model: string, sessionsOve
   let tokensIn = 0;
   let tokensOut = 0;
   let costUsd = 0;
+  let reasoningTokens = 0;
   const messageIds = new Set<string>();
 
   const flow: ReviewFlow = new ReviewFlow(port, { onCard: (card) => controller.updateReview(card), onWarning: log });
@@ -210,6 +262,7 @@ export async function startHarness(workspace: string, model: string, sessionsOve
         const metrics = 'metrics' in event.state ? event.state.metrics : undefined;
         tokensIn += metrics?.totalInputTokens ?? 0;
         tokensOut += metrics?.totalOutputTokens ?? 0;
+        reasoningTokens += metrics?.totalReasoningTokens ?? 0;
         costUsd += metrics?.totalCostInUsd ?? 0;
       }
     },
@@ -245,7 +298,7 @@ export async function startHarness(workspace: string, model: string, sessionsOve
         requests,
         tokensIn,
         tokensOut,
-        costUsd,
+        costUsd: costUsd || estimateCostUsd(model, tokensIn, tokensOut, reasoningTokens),
         threads,
         tools: collectTools(view.items),
         files,

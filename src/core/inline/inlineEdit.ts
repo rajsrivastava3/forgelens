@@ -54,7 +54,9 @@ export function buildInlinePrompt(target: InlineTarget, selection: SelectionText
   for (const mention of mentions) {
     parts.push(`Mentioned by you, ${mention.label}:\n${mention.found ? fence('', mention.text) : mention.text}`);
   }
-  parts.push('Now call stage_edit for this change, then call apply_changes.');
+  parts.push(
+    'Everything you need is above. Make your first tool call stage_edit, with old_text copied from the selected code. Do not search the repository for conventions or examples first. Then call apply_changes.',
+  );
   return parts.join('\n\n');
 }
 

@@ -56,7 +56,7 @@ describe('readSelection and the prompt', () => {
     expect(prompt).toContain('```python\ndef get_debug_flag');
     expect(prompt).toContain('import os');
     expect(prompt).toContain('def other');
-    expect(prompt).toContain('stage_edit');
+    expect(prompt).toContain('Make your first tool call stage_edit');
     expect(prompt).toContain('apply_changes');
     expect(inlineDisplayText(target)).toBe('Edit src/h.py, lines 4-7: Treat off as false.');
   });

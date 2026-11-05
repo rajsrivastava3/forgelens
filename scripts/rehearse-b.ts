@@ -7,7 +7,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { sendAgentRequest } from '../src/core/context/agentPrompt';
-import { arg, checkResources, exec, freshClone, isModelBlocked, PYTHON, resetClone, startHarness, verifyEnv, writeResults, type RunRecord, type ToolRecord } from './rehearse/harness';
+import { addSpend, arg, checkResources, checkSpend, INR_PER_USD, exec, freshClone, isModelBlocked, PYTHON, resetClone, startHarness, verifyEnv, writeResults, type RunRecord, type ToolRecord } from './rehearse/harness';
 import { scriptedSessions, type ScriptStep } from './rehearse/scripted';
 
 const INSTRUCTION =
@@ -123,6 +123,7 @@ async function main(): Promise<void> {
   for (let run = 1; run <= runs; run += 1) {
     if (run > 1 && !scripted) await new Promise((resolve) => setTimeout(resolve, gapMs));
     while (modelIndex < models.length) {
+      checkSpend();
       resetClone(clone);
       const model = models[modelIndex] as string;
       const harness = await startHarness(clone, model, scripted ? (call) => scriptedSessions(dryRunSteps(scripted), call) : undefined);
@@ -130,6 +131,8 @@ async function main(): Promise<void> {
       await sendAgentRequest(harness.controller, harness.engine, INSTRUCTION, () => ({}), harness.log);
       const record = harness.record((Date.now() - started) / 1000);
       await harness.close();
+      const spentNow = addSpend(record.costUsd, `${path.basename(__filename)} run ${run} on ${model}`);
+      console.log(`  Cost: about Rs ${(record.costUsd * INR_PER_USD).toFixed(2)} ($${record.costUsd.toFixed(4)}). Spent in this run so far: Rs ${spentNow.toFixed(2)}.`);
 
       if (record.status === 'error' && isModelBlocked(record.error)) {
         results.push({ run, result: 'blocked', ...record });
