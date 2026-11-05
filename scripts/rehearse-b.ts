@@ -131,7 +131,8 @@ async function main(): Promise<void> {
       await sendAgentRequest(harness.controller, harness.engine, INSTRUCTION, () => ({}), harness.log);
       const record = harness.record((Date.now() - started) / 1000);
       await harness.close();
-      const spentNow = addSpend(record.costUsd, `${path.basename(__filename)} run ${run} on ${model}`);
+      // A dry run spends nothing, even when it plays a priced model's usage to test the guard.
+      const spentNow = addSpend(scripted ? 0 : record.costUsd, `${path.basename(__filename)} run ${run} on ${model}`);
       console.log(`  Cost: about Rs ${(record.costUsd * INR_PER_USD).toFixed(2)} ($${record.costUsd.toFixed(4)}). Spent in this run so far: Rs ${spentNow.toFixed(2)}.`);
 
       if (record.status === 'error' && isModelBlocked(record.error)) {
@@ -151,7 +152,8 @@ async function main(): Promise<void> {
       console.log(`  pytest: ${checks.pytest}. In --help: ${checks.helpLine || 'no'}`);
       if (!passed) console.log(`  ${[record.error, ...checks.failures].filter(Boolean).join('\n  ')}`);
       const inputs = record.perRequest.map((request) => request.input);
-      console.log(`  Tokens per request (input): ${inputs.join(', ') || 'none reported'}. Largest ${Math.max(0, ...inputs)}, total ${inputs.reduce((a, b) => a + b, 0)}.${record.stoppedForCost ? ' Stopped by the cost guard.' : ''}`);
+      const cached = record.perRequest.reduce((sum, request) => sum + request.cached, 0);
+      console.log(`  Tokens per request (input): ${inputs.join(', ') || 'none reported'}. Largest ${Math.max(0, ...inputs)}, total ${inputs.reduce((a, b) => a + b, 0)}, of which cache reads ${cached}.${record.stoppedForCost ? ' Stopped by the cost guard.' : ''}`);
       console.log(`  Tools: ${record.tools.map((tool) => `${tool.thread === 'main' ? '' : 'sub:'}${tool.name}`).join(' ')}`);
       console.log(`  Session: ${record.sessionUrl ?? 'none'}`);
       break;

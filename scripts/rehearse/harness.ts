@@ -142,7 +142,7 @@ export interface RunRecord {
   /** Set when the cost guard stopped the run. */
   stoppedForCost: boolean;
   /** Tokens of each model request, in order, with the thread it came from. */
-  perRequest: { thread: string; input: number; output: number }[];
+  perRequest: { thread: string; input: number; output: number; cached: number }[];
   status: string;
   error: string | undefined;
   sessionUrl: string | undefined;
@@ -202,7 +202,8 @@ export async function startHarness(
   let stoppedForCost = false;
   let primary = model;
   let liveCostUsd = 0;
-  const perRequest: { thread: string; input: number; output: number }[] = [];
+  const perRequest: { thread: string; input: number; output: number; cached: number }[] = [];
+  const usageIndex = new Map<string, number>();
   let noticeCount = 0;
   const port = new NodeEditorPort(workspace);
   const logLines: string[] = [];
@@ -302,10 +303,18 @@ export async function startHarness(
         messageIds.add(event.id);
         requests += 1;
       }
-      // Each finished message reports its tokens, so a runaway turn is caught while it runs, not after.
-      if (event.type === 'model.message' && event.usage) {
-        perRequest.push({ thread: event.threadId === 'main' ? 'main' : 'sub', input: event.usage.inputTokens ?? 0, output: event.usage.outputTokens ?? 0 });
-        liveCostUsd += estimateCostUsd(controller.activeModel ?? model, event.usage.inputTokens ?? 0, event.usage.outputTokens ?? 0, 0);
+      // Each message reports its tokens, so a runaway turn is caught while it runs, not after. The stream sends the
+      // message as an empty shell and the usage in a later delta, so both are read, keyed by message id.
+      if ((event.type === 'model.message' || event.type === 'model.message.delta') && event.usage) {
+        const request = { thread: event.threadId === 'main' ? 'main' : 'sub', input: event.usage.inputTokens ?? 0, output: event.usage.outputTokens ?? 0, cached: event.usage.cacheReadTokens ?? 0 };
+        const index = usageIndex.get(event.id);
+        if (index === undefined) {
+          usageIndex.set(event.id, perRequest.length);
+          perRequest.push(request);
+        } else {
+          perRequest[index] = request;
+        }
+        liveCostUsd = perRequest.reduce((sum, item) => sum + estimateCostUsd(controller.activeModel ?? model, item.input, item.output, 0), 0);
         if (liveCostUsd > RUN_COST_GUARD_USD && !stoppedForCost) {
           stoppedForCost = true;
           log(`[cost guard] about Rs ${(liveCostUsd * INR_PER_USD).toFixed(2)} spent in this run, over the guard. Stopping.`);
