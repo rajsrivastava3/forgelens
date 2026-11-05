@@ -131,3 +131,25 @@ describe('editor MCP server', () => {
     await client.close();
   });
 });
+
+describe('reads since the last staged edit', () => {
+  const text = (result: Awaited<ReturnType<Client['callTool']>>): string =>
+    (result.content as { type: string; text: string }[]).map((part) => part.text).join('');
+
+  it('says it is time to stage after six, starts again on a staged edit, and on a new request', async () => {
+    server.newTask();
+    const client = await connect();
+    const read = async (): Promise<string> => text(await client.callTool({ name: 'read_file', arguments: { path: 'hello.py' } }));
+    for (let i = 0; i < 6; i += 1) expect(await read()).not.toContain('[ForgeLens:');
+    expect(await read()).toContain('[ForgeLens: 7 reads and searches since your last staged edit.');
+
+    await client.callTool({ name: 'stage_edit', arguments: { path: 'hello.py', edits: [{ old_text: 'hi', new_text: 'hello' }] } });
+    expect(await read()).not.toContain('[ForgeLens:');
+
+    for (let i = 0; i < 6; i += 1) await read();
+    expect(await read()).toContain('[ForgeLens:');
+    server.newTask();
+    expect(await read()).not.toContain('[ForgeLens:');
+    await client.close();
+  });
+});

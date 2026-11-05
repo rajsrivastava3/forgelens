@@ -251,6 +251,7 @@ export async function startHarness(
   const scripted = sessionsOverride?.(callTool);
   const controller: AgentController = new AgentController({
     agentName: 'forgelens-agent',
+    onUserRequest: () => mcp.newTask(),
     baseUrl: () => BASE_URL,
     sessions: () => scripted ?? client.sessions,
     createSession: async (agentName, sessionModel) => {

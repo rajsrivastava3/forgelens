@@ -24,6 +24,8 @@ export interface AgentControllerOptions {
   onEvent?: (event: TurnEvent) => void;
   /** Takes over an approval, such as opening the hunk review for apply_changes. Undefined leaves it to decide(). */
   reviewApproval?: (approval: PendingApproval, signal: AbortSignal) => Promise<ApprovalDecision> | undefined;
+  /** Called as each user request starts, before anything is sent. */
+  onUserRequest?: () => void;
   /** True when an approval needs no person. It still goes through TrueForge as an allow. */
   autoApprove?: (approval: PendingApproval) => boolean;
   /** A stop, a failure or a new chat: whatever is staged will never be reviewed, so drop it. */
@@ -98,6 +100,7 @@ export class AgentController {
     if (!message || this.busy) return;
     this.busy = true;
     this.stopRequested = false;
+    this.options.onUserRequest?.();
     this.builder.userMessage(sendOptions.display ?? message);
     this.options.onChange();
     const agentName = sendOptions.agentName ?? this.options.agentName;
