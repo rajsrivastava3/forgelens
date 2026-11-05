@@ -37,21 +37,24 @@ export async function listDirTool(
 export async function repoMapTool(
   port: EditorPort,
   args: { path_prefix?: string | undefined; budget_tokens?: number | undefined },
+  /** Definitions per file from the context index. Without it, this reads the files itself. */
+  indexed?: ReadonlyMap<string, readonly { kind: string; line: number; signature: string }[]>,
 ): Promise<string> {
   const budget = Math.min(args.budget_tokens ?? DEFAULT_REPO_MAP_TOKENS, MAX_REPO_MAP_TOKENS);
   const files = (await port.listFiles())
     .filter((f) => !args.path_prefix || f.startsWith(args.path_prefix))
     .sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
 
+  const describe = (symbols: readonly { kind: string; line: number; signature: string }[]): string[] =>
+    symbols.filter((s) => s.kind === 'class' || s.kind === 'function').map((s) => `  ${s.line}: ${s.signature}`);
   const outlines = new Map<string, string[]>();
-  await forEachTextFile(port, files.filter((f) => /\.(py|ts|tsx|js|jsx)$/.test(f)), ({ path, text }) => {
-    outlines.set(
-      path,
-      extractSymbols(path, text)
-        .filter((s) => s.kind === 'class' || s.kind === 'function')
-        .map((s) => `  ${s.line}: ${s.signature}`),
-    );
-  });
+  if (indexed) {
+    for (const [path, symbols] of indexed) outlines.set(path, describe(symbols));
+  } else {
+    await forEachTextFile(port, files.filter((f) => /\.(py|ts|tsx|js|jsx)$/.test(f)), ({ path, text }) => {
+      outlines.set(path, describe(extractSymbols(path, text)));
+    });
+  }
 
   let used = 0;
   let omitted = 0;

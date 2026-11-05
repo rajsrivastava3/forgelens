@@ -1,16 +1,21 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { StagedEditorPort } from '../changeset/changeset';
 import { APPLY_TOOL, ReviewFlow } from '../changeset/reviewFlow';
+import { ContextEngine } from '../context/engine';
+import { ShadowWorkspace } from '../shadow/shadowWorkspace';
 import type { WritablePort } from '../tools/editorPort';
 import { readFileTool } from '../tools/readFile';
 import { retrieveContextTool } from '../tools/retrieveContext';
 import { searchCodeTool } from '../tools/searchCode';
 import { findReferencesTool, findSymbolTool } from '../tools/symbols';
+import { CommandRunner, runCommandTool, RUN_COMMAND_TOOL } from '../tools/runCommand';
 import { getStagedChangesTool, stageCreateFileTool, stageDeleteFileTool, stageEditTool } from '../tools/stageTools';
 import { getDiagnosticsTool, listDirTool, repoMapTool } from '../tools/workspaceViews';
 
@@ -30,6 +35,12 @@ export interface EditorMcpServerOptions {
   port: WritablePort;
   /** Holds staged edits and reviews. Created here when not given, for headless use. */
   flow?: ReviewFlow;
+  /** The context index. Created here when not given, for headless use, and kept only in memory. */
+  context?: ContextEngine;
+  /** Where staged runs copy the workspace. Defaults to the system temp folder. */
+  shadowRoot?: string;
+  /** Runs commands. Passed in so Stop can end them. */
+  runner?: CommandRunner;
   token: string;
   /** TCP port on 127.0.0.1. 0 picks a free port. */
   listenPort?: number;
@@ -47,7 +58,15 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false } as const;
 /** Staging changes nothing on disk, but it is not read-only: it changes what apply_changes will propose. */
 const STAGING = { readOnlyHint: false, destructiveHint: false } as const;
 
-function buildMcpServer(options: EditorMcpServerOptions, flow: ReviewFlow): McpServer {
+interface ServerParts {
+  flow: ReviewFlow;
+  context: ContextEngine;
+  shadow: ShadowWorkspace;
+  runner: CommandRunner;
+}
+
+function buildMcpServer(options: EditorMcpServerOptions, parts: ServerParts): McpServer {
+  const { flow, context, shadow, runner } = parts;
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.0.1' });
   // Every read tool sees staged content, so the agent always reads its own edits back.
   const port = new StagedEditorPort(options.port, flow.changeset);
@@ -71,14 +90,14 @@ function buildMcpServer(options: EditorMcpServerOptions, flow: ReviewFlow): McpS
     'retrieve_context',
     {
       description:
-        'Find the files most relevant to a question or task. Returns ranked files, each with the reason it was chosen, within a token budget. Start here when you do not know where the code is.',
+        'Find the files most relevant to a question or task, using a code index: word matches, symbol names, imports, and test and doc pairings. Returns ranked files with the reason each was chosen, the best code in full, then signatures, then paths, within a token budget.',
       inputSchema: {
         query: z.string().describe('The task or question, in plain words and identifiers'),
         budget_tokens: z.number().int().positive().optional().describe('Token budget for the result'),
       },
       annotations: READ_ONLY,
     },
-    (args) => run('retrieve_context', args, () => retrieveContextTool(port, args)),
+    (args) => run('retrieve_context', args, () => retrieveContextTool(context, args)),
   );
 
   server.registerTool(
@@ -91,7 +110,7 @@ function buildMcpServer(options: EditorMcpServerOptions, flow: ReviewFlow): McpS
       },
       annotations: READ_ONLY,
     },
-    (args) => run('repo_map', args, () => repoMapTool(port, args)),
+    (args) => run('repo_map', args, async () => repoMapTool(port, args, await context.outlines())),
   );
 
   server.registerTool(
@@ -232,6 +251,22 @@ function buildMcpServer(options: EditorMcpServerOptions, flow: ReviewFlow): McpS
     (args) => run(APPLY_TOOL, args, () => flow.applyApproved(args.summary)),
   );
 
+  server.registerTool(
+    RUN_COMMAND_TOOL,
+    {
+      description:
+        'Run a shell command. target "staged" (the default) runs in a private copy of the workspace with your staged edits applied, so you can run the tests before the user reviews anything. target "workspace" runs in the real folder. Output is capped to its last part. Returns the exit code and output.',
+      inputSchema: {
+        command: z.string().describe('The command, for example python -m pytest tests/test_cli.py -q'),
+        cwd: z.string().optional().describe('Folder relative to the workspace root'),
+        target: z.enum(['staged', 'workspace']).optional().describe('Where to run. Defaults to staged'),
+        timeout_s: z.number().int().positive().optional().describe('Time limit in seconds, at most 600. Defaults to 120'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    (args) => run(RUN_COMMAND_TOOL, args, () => runCommandTool({ workspaceRoot: root, shadow, runner }, args)),
+  );
+
   options.configure?.(server);
   return server;
 }
@@ -257,7 +292,7 @@ function respondJson(res: ServerResponse, status: number, message: string): void
 /** Stateless: each request gets its own server and transport, so nothing depends on MCP session state. */
 async function handleRequest(
   options: EditorMcpServerOptions,
-  flow: ReviewFlow,
+  parts: ServerParts,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -273,7 +308,7 @@ async function handleRequest(
     return respondJson(res, 405, 'method not allowed');
   }
 
-  const server = buildMcpServer(options, flow);
+  const server = buildMcpServer(options, parts);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -291,8 +326,19 @@ export function startEditorMcpServer(
 ): Promise<RunningEditorMcpServer> {
   // One per server, not per request: staged edits must outlive the request that made them.
   const flow = options.flow ?? new ReviewFlow(options.port);
+  const parts: ServerParts = {
+    flow,
+    context: options.context ?? new ContextEngine(options.port),
+    runner: options.runner ?? new CommandRunner(),
+    shadow: new ShadowWorkspace(
+      () => options.port.workspaceRoot,
+      options.shadowRoot ?? path.join(tmpdir(), `forgelens-shadow-${randomBytes(6).toString('hex')}`),
+      () => options.port.listFiles(),
+      flow.changeset,
+    ),
+  };
   const http: Server = createServer((req, res) => {
-    handleRequest(options, flow, req, res).catch((error: unknown) => {
+    handleRequest(options, parts, req, res).catch((error: unknown) => {
       if (!res.headersSent) respondJson(res, 500, String(error));
       else res.end();
     });

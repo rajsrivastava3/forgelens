@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { EditorPort } from '../../src/core/tools/editorPort';
 import { NodeEditorPort, retryWhileLocked } from '../../src/core/tools/nodeEditorPort';
 import { capText, globToRegExp, MAX_TOOL_OUTPUT_CHARS } from '../../src/core/tools/output';
+import { ContextEngine } from '../../src/core/context/engine';
 import { retrieveContextTool } from '../../src/core/tools/retrieveContext';
 import { searchCodeTool } from '../../src/core/tools/searchCode';
 import { extractSymbols, findReferencesTool, findSymbolTool } from '../../src/core/tools/symbols';
@@ -172,20 +173,23 @@ describe('workspace views', () => {
 });
 
 describe('retrieveContextTool', () => {
-  it('ranks by relevance, gives a reason per file and reports the budget', async () => {
-    const out = await retrieveContextTool(port, { query: 'where is the get_flag helper for cli' });
-    expect(out).toMatch(/Context pack \(keyword search\): \d+ files, ~\d+ of 4000 tokens/);
-    expect(out).toContain('- src/app/cli.py');
-    expect(out).toContain('why: path mentions');
+  const engine = new ContextEngine(port);
+
+  it('ranks by the index, with a reason per file and its usage against the budget', async () => {
+    const out = await retrieveContextTool(engine, { query: 'where is the get_flag helper for config' });
+    expect(out).toMatch(/Context Pack: \d+ files, \d+ of 4000 tokens/);
+    expect(out).toContain('| File | Why | Tokens | Shown as |');
+    expect(out).toContain('get_flag');
   });
 
-  it('respects a small budget and says what it dropped', async () => {
-    const out = await retrieveContextTool(port, { query: 'get_flag', budget_tokens: 30 });
-    expect(out).toContain('left out');
+  it('honours a small budget and caps a large one', async () => {
+    expect(await retrieveContextTool(engine, { query: 'get_flag', budget_tokens: 150 })).toMatch(/of 150 tokens/);
+    expect(await retrieveContextTool(engine, { query: 'get_flag', budget_tokens: 999_999 })).toMatch(/of 12000 tokens/);
   });
 
-  it('asks for a better query when nothing is searchable', async () => {
-    expect(await retrieveContextTool(port, { query: 'is the of' })).toContain('no searchable terms');
+  it('says when a query has nothing to search for', async () => {
+    expect(await retrieveContextTool(engine, { query: 'is the of' })).toContain('no searchable');
+    expect(await retrieveContextTool(engine, { query: 'zzzqqq' })).toContain('No files match');
   });
 });
 

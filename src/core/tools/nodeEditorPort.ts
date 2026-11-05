@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import type { DiagnosticInfo, FileWrite, WritablePort } from './editorPort';
@@ -119,6 +119,15 @@ export class NodeEditorPort implements WritablePort {
 
   readDiskBytes(relativePath: string): Promise<Uint8Array | undefined> {
     return readIfPresent(resolveInsideWorkspace(this.workspaceRoot, relativePath));
+  }
+
+  async statFile(relativePath: string): Promise<{ mtimeMs: number; size: number } | undefined> {
+    try {
+      const { mtimeMs, size } = await stat(resolveInsideWorkspace(this.workspaceRoot, relativePath));
+      return { mtimeMs, size };
+    } catch {
+      return undefined;
+    }
   }
 
   /** No editor, so nothing can be unsaved. */
