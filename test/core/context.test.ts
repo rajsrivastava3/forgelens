@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildAgentPrompt } from '../../src/core/context/agentPrompt';
 import { chunkFile } from '../../src/core/context/chunker';
 import { ContextEngine, ContextIndex, indexFile, type IndexStore } from '../../src/core/context/engine';
-import { buildPack, formatPack } from '../../src/core/context/packer';
+import { buildPack, docSections, formatPack } from '../../src/core/context/packer';
 import { buildModuleMap, isChangelog, isDocFile, isTestFile, moduleStem, pairedFiles, parsePythonImports, resolveImports } from '../../src/core/context/relations';
 import { retrieve } from '../../src/core/context/retrieve';
 import { pathTokens, splitIdentifier, stem, tokenize } from '../../src/core/context/tokenize';
@@ -549,5 +549,24 @@ describe('pack defaults', () => {
     const content = pack.items[0]?.content ?? '';
     expect(content).toMatch(/\[\d+ more definitions\]/);
     expect(content.split('\n').filter((line) => /^\d+: def helper_/.test(line)).length).toBeLessThan(25);
+  });
+});
+
+describe('doc sections', () => {
+  it('finds reStructuredText and Markdown titles, and skips code fences and indented lines', () => {
+    const lines = ['Title', '=====', '', 'Run It', '------', 'text', '    Indented', '    --------', '```', '# not a title', '```', '## Next part', 'Short', '--'];
+    expect(docSections(lines)).toEqual([
+      { line: 1, title: 'Title' },
+      { line: 4, title: 'Run It' },
+      { line: 12, title: 'Next part' },
+    ]);
+  });
+
+  it.skipIf(!hasFlask)('shows the section titles of a doc in the Task B pack', async () => {
+    const engine = new ContextEngine(new NodeEditorPort(FLASK));
+    await engine.ensureBuilt();
+    const text = formatPack(await engine.pack(TASK_B));
+    expect(text).toContain('[sections in this file]');
+    expect(text).toMatch(/\d+: Open a Shell/);
   });
 });

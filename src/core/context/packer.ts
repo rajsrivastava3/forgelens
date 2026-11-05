@@ -1,6 +1,7 @@
 import { estimateTokens } from '../tools/output';
 import type { ContextIndex } from './engine';
 import type { RetrievedItem } from './retrieve';
+import { isDocFile } from './relations';
 import { splitIdentifier } from './tokenize';
 
 export const DEFAULT_BUDGET_TOKENS = 6_000;
@@ -113,13 +114,49 @@ function fullContent(index: ContextIndex, item: RetrievedItem, text: string, max
       .map((symbol) => `${symbol.line}: ${symbol.signature}`)
       .concat(rest.length > MAX_OUTLINE_LINES ? [`[${rest.length - MAX_OUTLINE_LINES} more definitions]`] : [])
       .join('\n');
-    const outline = others ? `\n[other definitions in this file]\n${others}` : '';
+    const definitions = others ? `\n[other definitions in this file]\n${others}` : '';
+    // A doc has no definitions, but its section titles say where a new section belongs.
+    const sections = isDocFile(item.path) ? docSections(lines).filter((section) => !shown(section.line)) : [];
+    const outline =
+      definitions ||
+      (sections.length > 0
+        ? `\n[sections in this file]\n${sections
+            .slice(0, MAX_SECTION_LINES)
+            .map((section) => `${section.line}: ${section.title}`)
+            .concat(sections.length > MAX_SECTION_LINES ? [`[${sections.length - MAX_SECTION_LINES} more sections]`] : [])
+            .join('\n')}`
+        : '');
     return parts.join('\n[...]\n') + (used + estimateTokens(outline) <= maxTokens ? outline : '');
   }
   // Its best chunk alone is over the limit, as a very long function can be: the start of it still helps.
   const first = ranges[0];
   if (!first || maxTokens < MIN_SHORTENED_TOKENS) return undefined;
   return `${numbered(lines, first.startLine, first.endLine).slice(0, (maxTokens - 12) * 4)}\n[shortened: read_file has the rest]`;
+}
+
+const MAX_SECTION_LINES = 30;
+const RST_UNDERLINE = /^([=\-~^"'`#*+:.])\1{2,}\s*$/;
+
+/** Section titles of a reStructuredText or Markdown file, with the line each starts on. */
+export function docSections(lines: readonly string[]): { line: number; title: string }[] {
+  const sections: { line: number; title: string }[] = [];
+  let fenced = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? '';
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    if (fenced) continue;
+    const markdown = /^#{1,6}\s+(\S.*)$/.exec(line);
+    if (markdown?.[1]) {
+      sections.push({ line: i + 1, title: markdown[1].trim() });
+      continue;
+    }
+    const next = lines[i + 1] ?? '';
+    const title = line.trim();
+    if (title && !line.startsWith(' ') && !RST_UNDERLINE.test(line) && RST_UNDERLINE.test(next) && next.trim().length >= title.length) {
+      sections.push({ line: i + 1, title });
+    }
+  }
+  return sections;
 }
 
 function skeletonContent(index: ContextIndex, path: string): string {
