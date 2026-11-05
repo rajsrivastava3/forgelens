@@ -8,9 +8,10 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { sendInlineEdit, type InlineTarget } from '../src/core/inline/inlineEdit';
 import { addSpend, arg, BASE_URL, checkResources, checkSpend, exec, freshClone, INR_PER_USD, startHarness, writeResults } from './rehearse/harness';
+import { selectGetDebugFlag, TASK_A_FILE, TASK_A_INSTRUCTION, verifyTaskA } from './rehearse/taskA';
 
-const INSTRUCTION = "Treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value that is treated as false.";
-const FILE = 'src/flask/helpers.py';
+const INSTRUCTION = TASK_A_INSTRUCTION;
+const FILE = TASK_A_FILE;
 
 /** A provider that fails on purpose. Its key is a made-up string, never a real one. */
 async function ensureBrokenProvider(mode: string): Promise<string> {
@@ -33,20 +34,10 @@ async function ensureBrokenProvider(mode: string): Promise<string> {
   return name + '/gemini-3-8-flash';
 }
 
-function selectFunction(text: string): { startLine: number; endLine: number } {
-  const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((line) => line.startsWith('def get_debug_flag'));
-  let end = start;
-  for (let i = start + 1; i < lines.length && (lines[i]?.startsWith(' ') || lines[i]?.trim() === ''); i += 1) {
-    if (lines[i]?.trim()) end = i;
-  }
-  return { startLine: start + 1, endLine: end + 1 };
-}
-
 async function main(): Promise<void> {
   checkResources();
   const mode = arg('--mode') ?? 'key';
-  const fallback = arg('--fallback') ?? 'gemini-free/gemini-flash-lite-latest';
+  const fallback = arg('--fallback') ?? 'google-gemini/gemini-3-8-flash';
   const workDir = path.resolve(arg('--work') ?? 'D:\\forgelens-e2e\\rehearse-c');
   const broken = await ensureBrokenProvider(mode);
   checkSpend([broken, fallback]);
@@ -68,7 +59,7 @@ async function main(): Promise<void> {
     responsiveTicks += 1;
   }, 100);
   const fileText = readFileSync(path.join(clone, FILE), 'utf8');
-  const target: InlineTarget = { path: FILE, ...selectFunction(fileText), language: 'python', instruction: INSTRUCTION };
+  const target: InlineTarget = { path: FILE, ...selectGetDebugFlag(fileText), language: 'python', instruction: INSTRUCTION };
   await sendInlineEdit({ controller: harness.controller, flow: harness.flow, port: harness.port, log: harness.log }, target, fileText);
   clearInterval(ticker);
   const record = harness.record((Date.now() - started) / 1000);
@@ -76,16 +67,18 @@ async function main(): Promise<void> {
   const spent = addSpend(record.costUsd, 'rehearse-c (' + mode + ') on ' + record.modelsTried.join(' then '));
 
   const finalStatus = await git();
+  const checks = await verifyTaskA(clone);
   const fellBack = record.modelsTried.includes(fallback) && record.notices.some((notice) => notice.startsWith('Primary model failed'));
   const landed = finalStatus === 'M ' + FILE;
   console.log('Mode: ' + mode + '. Models tried: ' + record.modelsTried.join(' then ') + '. ' + record.seconds.toFixed(1) + ' s, ' + String(record.requests) + ' requests.');
   for (const notice of record.notices) console.log('  Notice: ' + notice);
   console.log('  Fell back automatically: ' + (fellBack ? 'yes' : 'no') + '. git status at the switch: "' + (statusAtFallback ?? 'no switch') + '".');
   console.log('  Final: ' + record.status + (record.error ? ' (' + record.error + ')' : '') + '. git status: "' + finalStatus + '". The fallback\'s edit ' + (landed ? 'landed after review.' : 'did not land.'));
+  console.log('  Task A checks: ' + (checks.passed ? 'PASS' : 'FAIL') + '. Exact command printed ' + checks.exactCommand + '. pytest: ' + checks.pytest + '.' + (checks.passed ? '' : ' ' + checks.failures.join('; ')));
   console.log('  The process stayed responsive: ' + String(responsiveTicks) + ' timer ticks in ' + record.seconds.toFixed(1) + ' s.');
   console.log('  Cost: about Rs ' + (record.costUsd * INR_PER_USD).toFixed(2) + '. Spent in this run so far: Rs ' + spent.toFixed(2) + '.');
   console.log('  Session: ' + (record.sessionUrl ?? 'none'));
-  writeResults('rehearse-c-' + mode, { mode, broken, fallback, statusAtFallback, finalStatus, fellBack, ...record });
+  writeResults('rehearse-c-' + mode, { mode, broken, fallback, statusAtFallback, finalStatus, fellBack, checks, ...record });
 }
 
 void main().catch((error: unknown) => {

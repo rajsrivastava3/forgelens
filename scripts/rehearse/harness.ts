@@ -141,6 +141,8 @@ export interface RunRecord {
   notices: string[];
   /** Set when the cost guard stopped the run. */
   stoppedForCost: boolean;
+  /** Tokens of each model request, in order, with the thread it came from. */
+  perRequest: { thread: string; input: number; output: number }[];
   status: string;
   error: string | undefined;
   sessionUrl: string | undefined;
@@ -185,7 +187,7 @@ function collectTools(items: readonly ViewItem[], thread = 'main'): ToolRecord[]
 }
 
 /** The most one run may cost before it is stopped mid-turn. The total cap is checked between runs as well. */
-const RUN_COST_GUARD_USD = Number(process.env['FORGELENS_RUN_GUARD_INR'] ?? 30) / INR_PER_USD;
+const RUN_COST_GUARD_USD = Number(process.env['FORGELENS_RUN_GUARD_INR'] ?? 20) / INR_PER_USD;
 
 /** Makes `sessionsOverride` the server, for a dry run with no model. `models` is the chain, primary first. */
 export async function startHarness(
@@ -200,6 +202,7 @@ export async function startHarness(
   let stoppedForCost = false;
   let primary = model;
   let liveCostUsd = 0;
+  const perRequest: { thread: string; input: number; output: number }[] = [];
   let noticeCount = 0;
   const port = new NodeEditorPort(workspace);
   const logLines: string[] = [];
@@ -301,6 +304,7 @@ export async function startHarness(
       }
       // Each finished message reports its tokens, so a runaway turn is caught while it runs, not after.
       if (event.type === 'model.message' && event.usage) {
+        perRequest.push({ thread: event.threadId === 'main' ? 'main' : 'sub', input: event.usage.inputTokens ?? 0, output: event.usage.outputTokens ?? 0 });
         liveCostUsd += estimateCostUsd(controller.activeModel ?? model, event.usage.inputTokens ?? 0, event.usage.outputTokens ?? 0, 0);
         if (liveCostUsd > RUN_COST_GUARD_USD && !stoppedForCost) {
           stoppedForCost = true;
@@ -343,6 +347,7 @@ export async function startHarness(
         modelsTried,
         notices: view.items.flatMap((item) => (item.kind === 'notice' ? [item.text] : [])),
         stoppedForCost,
+        perRequest,
         status: view.status,
         error: view.error,
         sessionUrl: view.sessionUrl,

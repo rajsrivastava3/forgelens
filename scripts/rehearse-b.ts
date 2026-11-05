@@ -150,6 +150,8 @@ async function main(): Promise<void> {
       console.log(`  Changed: ${checks.changedFiles.join(', ') || 'none'}. Hunks: ${record.hunks}. ${record.reviewCard ?? 'No review.'}`);
       console.log(`  pytest: ${checks.pytest}. In --help: ${checks.helpLine || 'no'}`);
       if (!passed) console.log(`  ${[record.error, ...checks.failures].filter(Boolean).join('\n  ')}`);
+      const inputs = record.perRequest.map((request) => request.input);
+      console.log(`  Tokens per request (input): ${inputs.join(', ') || 'none reported'}. Largest ${Math.max(0, ...inputs)}, total ${inputs.reduce((a, b) => a + b, 0)}.${record.stoppedForCost ? ' Stopped by the cost guard.' : ''}`);
       console.log(`  Tools: ${record.tools.map((tool) => `${tool.thread === 'main' ? '' : 'sub:'}${tool.name}`).join(' ')}`);
       console.log(`  Session: ${record.sessionUrl ?? 'none'}`);
       break;
