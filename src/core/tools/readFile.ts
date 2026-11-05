@@ -7,7 +7,8 @@ export interface ReadFileArgs {
   end_line?: number | undefined;
 }
 
-export const READ_FILE_MAX_LINES = 400;
+/** Small on purpose: the agent should read the range it will change, not whole files. */
+export const READ_FILE_MAX_LINES = 150;
 
 /** Returns numbered lines and says so when the result was truncated, so the model can page. */
 export async function readFileTool(port: EditorPort, args: ReadFileArgs): Promise<string> {

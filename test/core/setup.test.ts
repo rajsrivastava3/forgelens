@@ -168,3 +168,22 @@ describe('the fallback chain and sessions per model', () => {
     expect(spec.instructions).toBe(agent.manifest.instructions);
   });
 });
+
+describe('agent mode is told to keep costs down', () => {
+  const text = (agent as { manifest: { instructions: string } }).manifest.instructions;
+
+  it('trusts the pack, bounds the explorer, reads narrowly, stages in few calls, tests once, applies once', () => {
+    expect(text).toContain('Trust it.');
+    expect(text).toContain('at most 4 tool calls');
+    expect(text).toContain('at most 150 lines a call');
+    expect(text).toContain('Never read a range you have already read');
+    expect(text).toContain('one stage_edit per file, with several edits in it');
+    expect(text).toContain('Call run_command once with target "staged"');
+    expect(text).toContain('Call apply_changes once');
+  });
+
+  it('has a short iteration limit and names no file of any repository', () => {
+    expect((agent as { manifest: { config: { iteration_limit: number } } }).manifest.config.iteration_limit).toBe(25);
+    expect(text).not.toMatch(/cli\.py|helpers\.py|flask/i);
+  });
+});

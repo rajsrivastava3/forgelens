@@ -157,7 +157,7 @@ function buildMcpServer(options: EditorMcpServerOptions, parts: ServerParts): Mc
   server.registerTool(
     'read_file',
     {
-      description: 'Read a text file from the workspace, including any edits you have staged. Returns numbered lines; says when the result was truncated.',
+      description: 'Read lines of a text file in the workspace, including any edits you have staged. Pass start_line and end_line; at most 150 lines come back per call. Returns numbered lines and says when more remain.',
       inputSchema: {
         path: z.string().describe('Path relative to the workspace root'),
         start_line: z.number().int().positive().optional().describe('First line, 1-based'),
