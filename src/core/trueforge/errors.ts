@@ -1,5 +1,6 @@
 export type TurnErrorKind =
   | 'quota'
+  | 'billing'
   | 'overloaded'
   | 'auth'
   | 'model-not-found'
@@ -51,6 +52,9 @@ export function describeTurnError(raw: string, baseUrl = 'http://localhost:8790'
     const parts = [`Model quota exceeded ${prefix}`.trim(), limit ? `: ${limit}.` : '.'];
     const message = `${parts.join('')}${retry ? ` Retry in ${retry.replace(/\.\d+$/, '')}s.` : ''}`;
     return { kind: 'quota', httpStatus, message, raw };
+  }
+  if (httpStatus === 402) {
+    return { kind: 'billing', httpStatus, message: `The model provider refused the request for billing reasons ${prefix}: ${summary}`, raw };
   }
   if (httpStatus === 401 || httpStatus === 403) {
     return { kind: 'auth', httpStatus, message: `The model provider rejected the API key ${prefix}: ${summary}`, raw };

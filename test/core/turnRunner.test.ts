@@ -339,3 +339,14 @@ describe('describeTurnError', () => {
     expect(described.raw).toBe(raw);
   });
 });
+
+describe('describeTurnError for billing', () => {
+  it('says plainly that it is a billing refusal', () => {
+    const raw = '[Model Error] Request failed (402): Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.';
+    expect(describeTurnError(raw)).toMatchObject({
+      kind: 'billing',
+      httpStatus: 402,
+      message: 'The model provider refused the request for billing reasons (402) : Your prepayment credits are depleted.',
+    });
+  });
+});
