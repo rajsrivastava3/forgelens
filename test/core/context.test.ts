@@ -490,3 +490,22 @@ describe('repo map from the index', () => {
     expect(reads).toBe(0);
   });
 });
+
+describe('reason text', () => {
+  it('names what code defines, and does not repeat a file', async () => {
+    const index = await indexOf({
+      'src/pkg/cli.py': 'from .core import run\n\ndef command_list():\n    return run()\n',
+      'src/pkg/core.py': 'def run():\n    return 1\n',
+      'tests/test_cli.py': 'from pkg.cli import command_list\n\ndef test_command_list_works():\n    assert command_list()\n',
+      'docs/cli.rst': 'Commands\n========\n\nCall command_list from your code.\n',
+    });
+    const items = new Map(retrieve(index, 'the cli command list').map((item) => [item.path, item.reason]));
+    expect(items.get('src/pkg/cli.py')).toContain('defines command_list');
+    expect(items.get('src/pkg/cli.py')).not.toContain('the code');
+    expect(items.get('tests/test_cli.py')).toContain('test pair of src/pkg/cli.py');
+    expect(items.get('tests/test_cli.py')).not.toContain('imports src/pkg/cli.py');
+    expect(items.get('tests/test_cli.py')).not.toContain('test_command_list_works');
+    expect(items.get('docs/cli.rst')).toContain('documents src/pkg/cli.py');
+    expect(items.get('docs/cli.rst')).not.toContain('mentions');
+  });
+});

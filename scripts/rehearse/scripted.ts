@@ -9,7 +9,11 @@ export type ScriptStep =
   /** A gated call: the turn pauses until the approval comes back. */
   | { kind: 'gated'; name: string; args: unknown }
   | { kind: 'thread'; title: string; tools: { name: string; args: unknown }[]; answer: string }
-  | { kind: 'text'; text: string };
+  | { kind: 'text'; text: string }
+  /** Any other event TrueForge sends, as given. */
+  | { kind: 'event'; event: unknown }
+  /** Runs something between events, for a test that wants to look at the screen. */
+  | { kind: 'hook'; run: () => Promise<void> };
 
 export function scriptedSessions(steps: readonly ScriptStep[], callTool: (name: string, args: unknown) => Promise<string>): SessionsApi {
   let next = 0;
@@ -53,7 +57,11 @@ export function scriptedSessions(steps: readonly ScriptStep[], callTool: (name: 
     while (next < steps.length) {
       const step = steps[next] as ScriptStep;
       next += 1;
-      if (step.kind === 'tool') {
+      if (step.kind === 'event') {
+        yield emit(step.event);
+      } else if (step.kind === 'hook') {
+        await step.run();
+      } else if (step.kind === 'tool') {
         const callId = id('call');
         yield emit(message('main', '', [call(callId, step.name, step.args)]));
         yield emit(response('main', callId, await callTool(step.name, step.args)));

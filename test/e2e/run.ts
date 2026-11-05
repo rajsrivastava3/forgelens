@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
+import { scriptedSessions as scriptedRehearsalSessions, type ScriptStep } from '../../scripts/rehearse/scripted';
 import type { RunView, ToolItem, ViewItem } from '../../src/core/trueforge/runView';
+import type { SessionsApi } from '../../src/core/trueforge/turnRunner';
 import type { PanelState } from '../../src/vscode/protocol';
 
 const exec = promisify(execFile);
@@ -1141,6 +1143,165 @@ async function scenarioTaskALive(): Promise<void> {
   check(passes > 0, 'at least one live pass: ' + JSON.stringify(runs.map((item) => ({ run: item['run'], result: item['result'], error: item['error'] }))));
 }
 
+const TASK_B_INSTRUCTION =
+  'Add a new built-in CLI command flask config that prints the loaded application\'s configuration as JSON, masking the values of any key containing SECRET, PASSWORD, TOKEN or KEY as "***". It must appear in flask --help, be covered by a test, and be documented alongside the other built-in commands.';
+
+const read = (selector: string): Thenable<{ clicked: boolean; statusText: string }> => vscode.commands.executeCommand('forgelens.internal.read', selector);
+
+async function useScriptSteps(steps: ScriptStep[], onPrompt?: (prompt: string) => void): Promise<void> {
+  const inner = scriptedRehearsalSessions(steps, callMcpTool);
+  const api: SessionsApi = {
+    createTurnStream: (id, request, options) => {
+      const first = request.input[0];
+      if (first?.type === 'user.message') onPrompt?.(first.content as string);
+      return inner.createTurnStream(id, request, options);
+    },
+    cancel: (id) => inner.cancel(id),
+  };
+  await vscode.commands.executeCommand('forgelens.internal.useSessions', { api, sessionId: 'scripted-session' });
+  await newChat();
+  await waitFor('earlier diff tabs to close', () => diffTabs().length === 0, 10_000);
+}
+
+/** Task B's whole shape with a scripted agent: pack, explorer thread, staged tests, compaction notice, inline review. */
+async function scenarioAgentFlow(): Promise<void> {
+  const report: Record<string, unknown> = {};
+  let prompt = '';
+  const diffConfig = (): boolean | undefined => vscode.workspace.getConfiguration('diffEditor').get<boolean>('renderSideBySide');
+  const layoutBefore = diffConfig();
+  await useScriptSteps(
+    [
+      {
+        kind: 'hook',
+        run: async () => {
+          await sleep(500);
+          await shot('p4-1-context-pack-card');
+          const summary = await read('.context-summary');
+          const onScreen = await vscode.commands.executeCommand<boolean>('forgelens.internal.inView', '.context-summary');
+          check(summary.clicked && onScreen, 'the card heading is on screen, not scrolled away');
+          check(/^Context chosen: \d+ files, [\d.]+k? \/ 12k tokens$/.test(summary.statusText), 'the card summary: ' + summary.statusText);
+          const rows = await read('.context-items');
+          check(rows.clicked, 'the reasons show without expanding anything');
+          check(rows.statusText.includes('src/flask/cli.py') && rows.statusText.includes('tests/test_cli.py') && rows.statusText.includes('docs/cli.rst'), 'the three files are listed');
+          report['cardSummary'] = summary.statusText;
+        },
+      },
+      {
+        kind: 'thread',
+        title: 'Explorer: find every touch point',
+        tools: [
+          { name: 'search_code', args: { query: 'add_command' } },
+          { name: 'read_file', args: { path: 'docs/cli.rst', start_line: 1, end_line: 20 } },
+        ],
+        answer: 'Touch points: src/flask/cli.py registers commands, tests/test_cli.py tests them, docs/cli.rst documents them.',
+      },
+      { kind: 'event', event: { type: 'thread.context_compaction_started', id: 'compact-1', threadId: 'main', createdAt: new Date().toISOString() } },
+      { kind: 'hook', run: () => sleep(300) },
+      { kind: 'event', event: { type: 'thread.context_compaction_finished', id: 'compact-2', threadId: 'main', createdAt: new Date().toISOString() } },
+      { kind: 'tool', name: 'stage_edit', args: { path: 'src/flask/cli.py', edits: [{ old_text: 'self.add_command(routes_command)', new_text: 'self.add_command(routes_command)  # scripted edit' }] } },
+      { kind: 'tool', name: 'stage_edit', args: { path: 'tests/test_cli.py', edits: [{ old_text: 'def test_cli_empty(app):', new_text: '# Scripted edit.\ndef test_cli_empty(app):' }] } },
+      { kind: 'tool', name: 'stage_edit', args: { path: 'docs/cli.rst', edits: [{ old_text: 'Custom Commands\n---------------', new_text: 'Scripted Section\n----------------\n\nScripted text.\n\n\nCustom Commands\n---------------' }] } },
+      {
+        kind: 'hook',
+        run: async () => {
+          await sleep(500);
+          await shot('p4-2-explorer-subagent-thread');
+          const thread = await read('.thread-summary');
+          check(thread.clicked && thread.statusText.includes('Explorer'), 'the subagent thread shows: ' + thread.statusText);
+          const notice = await read('.notice');
+          check(notice.clicked && notice.statusText.includes('Compacted the conversation'), 'the compaction notice shows: ' + notice.statusText);
+          report['thread'] = thread.statusText;
+          report['compaction'] = notice.statusText;
+        },
+      },
+      { kind: 'gated', name: 'run_command', args: { command: 'python -m pytest tests/test_cli.py -q', target: 'staged' } },
+      {
+        kind: 'hook',
+        run: async () => {
+          await sleep(500);
+          await shot('p4-3-run-command-auto-approved');
+          const badge = await read('.tool-auto:not([hidden])');
+          check(badge.clicked && badge.statusText === 'auto-approved (safe list)', 'the card says so: ' + badge.statusText);
+          report['badge'] = badge.statusText;
+        },
+      },
+      { kind: 'gated', name: 'apply_changes', args: { summary: 'Add the flask config command.' } },
+      { kind: 'text', text: 'Added the command, with a test and docs.' },
+    ],
+    (text) => (prompt = text),
+  );
+  const running = vscode.commands.executeCommand('forgelens.ask', TASK_B_INSTRUCTION);
+  await waitForReview();
+  await sleep(1500);
+  const shownAtReview = (await state()).view;
+  check(diffConfig() === false, 'the review shows inline diffs');
+  const uri = vscode.Uri.from({ scheme: PROPOSED, path: '/src/flask/cli.py' });
+  const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri);
+  check(lenses.some((lens) => lens.command?.title === 'Accept hunk'), 'the lenses are there in inline mode');
+  await shot('p3-10-review-inline-diff');
+  await shot('p4-4-task-b-review');
+
+  check(prompt.startsWith('## Context Pack:'), 'the pack goes first');
+  check(prompt.includes('| File | Why | Tokens | Shown as |'), 'the pack has its table');
+  check(prompt.endsWith('## Request\n' + TASK_B_INSTRUCTION), 'the request follows, word for word');
+  const shown = shownAtReview.items.find((item) => item.kind === 'user');
+  check(shown?.kind === 'user' && shown.text === TASK_B_INSTRUCTION, 'the panel shows only what was typed');
+
+  await acceptAndApply();
+  await running;
+  await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+  await waitFor('the diff layout setting to come back', () => diffConfig() === layoutBefore, 5_000);
+  const tools = toolsOf((await state()).view.items);
+  const command = tools.find((tool) => tool.name === 'run_command');
+  check(Boolean(command?.result?.includes('private copy')), 'the tests ran in the staged copy: ' + String(command?.result).slice(0, 200));
+  check(Boolean(command?.result?.includes('passed')), 'pytest ran: ' + String(command?.result).slice(-200));
+  report['stagedRun'] = command?.result?.trim().split('\n').at(-1);
+  await undoToClean();
+  results['agentFlow'] = report;
+}
+
+/** A command off the safe list still asks. */
+async function scenarioCommandAsks(): Promise<void> {
+  await useScriptSteps([
+    { kind: 'gated', name: 'run_command', args: { command: 'git status; echo chained', target: 'workspace' } },
+    { kind: 'text', text: 'Done.' },
+  ]);
+  const running = vscode.commands.executeCommand('forgelens.ask', 'Check the status.');
+  await waitFor('the approval', async () => (await state()).view.status === 'awaiting-approval', 15_000, 50);
+  await sleep(300);
+  const badge = await read('.tool-auto:not([hidden])');
+  check(!badge.clicked, 'not marked auto-approved');
+  const deny = await click('.status-awaiting-approval .approval button.secondary');
+  check(deny.clicked, 'Deny is on screen');
+  await running;
+  results['commandAsks'] = { ok: true };
+}
+
+async function scenarioPanelMentions(): Promise<void> {
+  let prompt = '';
+  await useScriptSteps([{ kind: 'text', text: 'Noted.' }], (text) => (prompt = text));
+  await vscode.commands.executeCommand('forgelens.panel.focus');
+  await vscode.commands.executeCommand('forgelens.internal.type', 'Explain @');
+  await sleep(1500); // The picker lists every file and symbol.
+  await shot('p4-5-panel-mention-picker');
+  await vscode.commands.executeCommand('workbench.action.quickOpenSelectNext');
+  await sleep(100);
+  await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+  await sleep(500);
+  const typed = (await read('#input')).statusText;
+  check(/^Explain @(file|symbol):\S+ $/.test(typed), 'the picked mention replaced the @: ' + typed);
+  const sent = await click('#send');
+  check(sent.clicked, 'Send is on screen');
+  await waitFor('the run', async () => !(await state()).busy && (await state()).view.status === 'done', 15_000, 100);
+  await sleep(400);
+  await shot('p4-6-mention-in-context-card');
+  const row = await read('.context-row.mentioned .context-why');
+  check(row.clicked && row.statusText.includes('mentioned by you'), 'the card labels it: ' + row.statusText);
+  check(prompt.includes('mentioned by you'), 'the pack labels it');
+  await newChat();
+  results['panelMentions'] = { typed, label: row.statusText };
+}
+
 /** Closes the window mid-run. launch.mjs then asks TrueForge whether the turn was stopped. */
 async function scenarioClose(): Promise<void> {
   await newChat();
@@ -1202,6 +1363,9 @@ export async function run(): Promise<void> {
       'inline-fallback': scenarioInlineFallback,
       'inline-cancel': scenarioInlineCancel,
       'inline-mentions': scenarioInlineMentions,
+      'agent-flow': scenarioAgentFlow,
+      'command-asks': scenarioCommandAsks,
+      'panel-mentions': scenarioPanelMentions,
       'task-a-live': scenarioTaskALive,
       offline: scenarioOffline,
       close: scenarioClose,
