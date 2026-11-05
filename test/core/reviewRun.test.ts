@@ -345,3 +345,23 @@ describe('tool card duration', () => {
     expect(tools(view.snapshot.items)[0]?.durationMs).toBe(200);
   });
 });
+
+describe('tool card results', () => {
+  it('keeps both ends of a long result, because a test summary comes last', () => {
+    const call = message('m1', '', [{ id: 'c1', toolInfo: { type: 'mcp', name: 'run_command', serverName: 's' }, function: { arguments: '{}' } }]);
+    const response = { type: 'tool.response', id: 'r1', threadId: 'main', toolCallId: 'c1', content: `Ran in a copy${'x'.repeat(9000)}56 passed` } as unknown as TurnEvent;
+    const view = new RunViewBuilder();
+    view.userMessage('go');
+    view.apply(call, call);
+    view.apply(response, response);
+    const result = tools(view.snapshot.items)[0]?.result ?? '';
+    expect(result).toContain('Ran in a copy');
+    expect(result).toContain('56 passed');
+    expect(result).toContain('[shortened for display]');
+    expect(result.length).toBeLessThan(4100);
+  });
+});
+
+function message(id: string, content: string, toolCalls: unknown[] = []): TurnEvent {
+  return { type: 'model.message', id, threadId: 'main', content, toolCalls, createdAt: '2026-11-04T00:00:00Z' } as unknown as TurnEvent;
+}

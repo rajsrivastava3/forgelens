@@ -73,6 +73,7 @@ export interface RunView {
 }
 
 const MAX_RESULT_CHARS = 4_000;
+const RESULT_HEAD_CHARS = 1_000;
 const WAITING_TEXT = 'Waiting for the model…';
 
 /** Pure: turns TurnRunner events into what the panel shows. Replaying a recording gives the same view. */
@@ -366,7 +367,11 @@ export class RunViewBuilder {
       : /^(Error:|\{"error")/.test(content.trimStart())
         ? 'error'
         : 'done';
-    tool.result = content.length > MAX_RESULT_CHARS ? `${content.slice(0, MAX_RESULT_CHARS)}\n[shortened for display]` : content;
+    // Both ends: what ran is at the start of a long result, and a test summary is at its end.
+    tool.result =
+      content.length > MAX_RESULT_CHARS
+        ? `${content.slice(0, RESULT_HEAD_CHARS)}\n[shortened for display]\n${content.slice(-(MAX_RESULT_CHARS - RESULT_HEAD_CHARS))}`
+        : content;
     const started = this.toolStartedAt.get(event.toolCallId);
     tool.durationMs = started === undefined ? undefined : Math.max(0, this.now() - started);
     // Once no tool is still running, the turn is waiting on the model again.
