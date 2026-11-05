@@ -129,6 +129,8 @@ export async function upsertAgent(
 
 export interface SetupResult {
   model: string;
+  /** Configured models TrueForge has, in order, primary first. The fallback chain. */
+  chain: string[];
   note: string | undefined;
   agents: Record<string, 'created' | 'updated'>;
 }
@@ -152,5 +154,25 @@ export async function setUpTrueForge(options: {
   for (const definition of options.agents) {
     agents[definition.name] = await upsertAgent(options.baseUrl, instantiateAgent(definition, choice.model), fetchFn);
   }
-  return { model: choice.model, note: choice.note, agents };
+  const chain = options.configuredModels.filter((model) => health.models.includes(model));
+  return { model: choice.model, chain: chain.length > 0 ? [...new Set(chain)] : [choice.model], note: choice.note, agents };
+}
+
+/**
+ * A session for a model other than the one the saved agent names: the same manifest from the committed
+ * definition, with only the model swapped. This is how a fallback runs the very same agent.
+ */
+export async function createSessionForModel(baseUrl: string, definition: AgentDefinition, model: string, fetchFn: typeof fetch = fetch): Promise<string> {
+  const { manifest } = instantiateAgent(definition, model);
+  const body = await apiRequest(fetchFn, baseUrl, '/sessions', { method: 'POST', body: JSON.stringify({ agent: { spec: manifest } }) });
+  const id = (body as { data?: { id?: string } }).data?.id;
+  if (!id) throw new Error('TrueForge did not return a session id.');
+  return id;
+}
+
+/** Every model TrueForge has, for the model picker. */
+export async function listModels(baseUrl: string, fetchFn: typeof fetch = fetch): Promise<string[]> {
+  const health = await checkTrueForge(baseUrl, fetchFn);
+  if (!health.ok) throw new Error(health.message);
+  return health.models;
 }

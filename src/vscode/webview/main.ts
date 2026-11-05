@@ -23,6 +23,8 @@ const transcript = required<HTMLDivElement>('transcript');
 const statusLine = required<HTMLDivElement>('status');
 const banner = required<HTMLDivElement>('banner');
 const errorBox = required<HTMLDivElement>('error');
+const errorText = required<HTMLSpanElement>('error-text');
+const switchModelButton = required<HTMLButtonElement>('switch-model');
 const modelBadge = required<HTMLSpanElement>('model');
 const sessionLink = required<HTMLButtonElement>('session');
 const input = required<HTMLTextAreaElement>('input');
@@ -251,7 +253,10 @@ function renderNotice(): Rendered {
     node,
     signature: '',
     update: (item) => {
-      if (item.kind === 'notice') node.textContent = item.text;
+      if (item.kind !== 'notice') return;
+      node.textContent = item.text;
+      node.className = item.tone === 'warning' ? 'notice warning' : 'notice';
+      node.setAttribute('role', item.tone === 'warning' ? 'alert' : 'status');
     },
   };
 }
@@ -342,7 +347,8 @@ function render(next: PanelState): void {
   banner.hidden = !next.banner;
   banner.textContent = next.banner ?? '';
   errorBox.hidden = !view.error;
-  errorBox.textContent = view.error ?? '';
+  errorText.textContent = view.error ?? '';
+  switchModelButton.hidden = view.errorAction !== 'switch-model';
   modelBadge.textContent = view.model ?? 'no model';
   modelBadge.title = view.model ? `Model: ${view.model}` : 'TrueForge has not been set up yet';
   sessionLink.hidden = !view.sessionUrl;
@@ -376,6 +382,7 @@ stopButton.addEventListener('click', pressStop);
 newChatButton.addEventListener('click', () => post({ type: 'new-chat' }));
 sessionLink.addEventListener('click', () => post({ type: 'open-session' }));
 banner.addEventListener('click', () => post({ type: 'setup' }));
+switchModelButton.addEventListener('click', () => post({ type: 'switch-model' }));
 input.addEventListener('input', () => {
   sendButton.disabled = !input.value.trim();
   if (/(^|\s)@$/.test(input.value.slice(0, input.selectionStart))) post({ type: 'pick-mention' });

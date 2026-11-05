@@ -17,6 +17,7 @@ export interface AgentPanelHandlers {
   onReviewApply(): void;
   onUndo(): void;
   onPickMention(): void;
+  onSwitchModel(): void;
 }
 
 export interface ProbeResult {
@@ -147,6 +148,9 @@ export class AgentPanel implements vscode.WebviewViewProvider {
       case 'pick-mention':
         this.handlers.onPickMention();
         break;
+      case 'switch-model':
+        this.handlers.onSwitchModel();
+        break;
       case 'probe-result':
         this.probeWaiter?.(message);
         this.probeWaiter = undefined;
@@ -177,7 +181,7 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   <div id="banner" hidden></div>
   <div id="transcript" role="log" aria-live="polite"></div>
   <div id="status" role="status" hidden></div>
-  <div id="error" role="alert" hidden></div>
+  <div id="error" role="alert" hidden><span id="error-text"></span><button class="secondary" id="switch-model" hidden>Switch model</button></div>
   <div class="composer">
     <textarea id="input" rows="2" placeholder="Ask, or describe a change. @ adds a file." aria-label="Message"></textarea>
     <button class="primary" id="send" disabled>Send</button>

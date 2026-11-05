@@ -101,6 +101,10 @@
       {
         "command": "forgelens.editSelection",
         "title": "ForgeLens: Edit selection"
+      },
+      {
+        "command": "forgelens.pickModel",
+        "title": "ForgeLens: Choose model"
       }
     ],
     "keybindings": [
@@ -134,8 +138,11 @@
           "items": {
             "type": "string"
           },
-          "default": [],
-          "markdownDescription": "TrueForge model names, in order of preference, such as `provider/model`. The first one TrueForge has is used. When empty, ForgeLens uses the first model TrueForge lists."
+          "default": [
+            "google-gemini/gemini-3-8-flash",
+            "gemini-free/gemini-flash-lite-latest"
+          ],
+          "markdownDescription": "TrueForge model names, in order. The first that TrueForge has is the primary; the rest are fallbacks, used automatically when it fails. Pick from what TrueForge has with **ForgeLens: Choose model** (the model in the status bar)."
         },
         "forgelens.mcpPort": {
           "type": "number",
@@ -170,6 +177,12 @@
             "git diff"
           ],
           "description": "Commands the agent may run without asking, each still going through the TrueForge approval. A command with shell syntax such as ; or | always asks."
+        },
+        "forgelens.firstTokenTimeoutSeconds": {
+          "type": "number",
+          "default": 45,
+          "minimum": 5,
+          "description": "If a model sends nothing within this many seconds, ForgeLens retries it and then falls back. Applies only before the first output."
         }
       }
     },
@@ -269,7 +282,8 @@
     "prepare": "git config core.hooksPath .githooks",
     "test:e2e": "node test/e2e/launch.mjs",
     "rehearse:a": "tsx scripts/rehearse-a.ts",
-    "rehearse:b": "tsx scripts/rehearse-b.ts"
+    "rehearse:b": "tsx scripts/rehearse-b.ts",
+    "rehearse:c": "tsx scripts/rehearse-c.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

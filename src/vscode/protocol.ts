@@ -35,4 +35,5 @@ export type ToExtension =
   | { type: 'review-apply' }
   | { type: 'undo' }
   | { type: 'pick-mention' }
+  | { type: 'switch-model' }
   | { type: 'probe-result'; clicked: boolean; reactionMs: number; statusText: string };

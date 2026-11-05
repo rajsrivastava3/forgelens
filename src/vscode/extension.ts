@@ -12,7 +12,7 @@ import { DEFAULT_BUDGET_TOKENS } from '../core/context/packer';
 import { startEditorMcpServer, type RunningEditorMcpServer } from '../core/mcp/server';
 import { CommandRunner, DEFAULT_SAFE_COMMANDS, isSafeCommand, RUN_COMMAND_TOOL } from '../core/tools/runCommand';
 import { AgentController } from '../core/trueforge/agentController';
-import { setUpTrueForge, type AgentDefinition } from '../core/trueforge/setup';
+import { createSessionForModel, listModels, setUpTrueForge, type AgentDefinition } from '../core/trueforge/setup';
 import type { SessionsApi } from '../core/trueforge/turnRunner';
 import { AgentPanel } from './agentPanel';
 import { InlineEdit } from './inlineEdit';
@@ -55,7 +55,7 @@ async function loadToken(secrets: vscode.SecretStorage): Promise<string> {
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('ForgeLens');
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  statusBar.command = 'forgelens.setup';
+  statusBar.command = 'forgelens.pickModel';
   statusBar.show();
   context.subscriptions.push(output, statusBar);
 
@@ -84,6 +84,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let mcpToken: string | undefined;
   let banner: string | undefined;
   let activeModel: string | undefined;
+  let modelChain: string[] = [];
   let client: TrueForge | undefined;
   let clientUrl: string | undefined;
   let testSessions: TestSessions | undefined;
@@ -103,10 +104,18 @@ export function activate(context: vscode.ExtensionContext): void {
     if (banner) {
       statusBar.text = '$(warning) ForgeLens: not connected';
       statusBar.tooltip = `${banner}\n\nClick to run "ForgeLens: Set up TrueForge".`;
-    } else {
-      statusBar.text = `$(telescope) ${activeModel ?? 'ForgeLens'}`;
-      statusBar.tooltip = activeModel ? `ForgeLens model: ${activeModel}` : 'ForgeLens';
+      statusBar.command = 'forgelens.setup';
+      return;
     }
+    statusBar.command = 'forgelens.pickModel';
+    const running = controller.activeModel;
+    const onFallback = running !== undefined && activeModel !== undefined && running !== activeModel;
+    statusBar.text = onFallback ? `$(warning) ${running} (fallback)` : `$(telescope) ${activeModel ?? 'ForgeLens'}`;
+    statusBar.tooltip = [
+      onFallback ? `Using the fallback ${running}: ${activeModel} failed.` : `ForgeLens model: ${activeModel ?? 'none'}`,
+      modelChain.length > 1 ? `Fallbacks, in order: ${modelChain.slice(1).join(', ')}` : 'No fallback configured.',
+      'Click to choose a model.',
+    ].join('\n');
   };
 
   const startMcp = async (): Promise<void> => {
@@ -148,6 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
         agents: AGENTS,
       });
       activeModel = result.model;
+      modelChain = result.chain;
       banner = undefined;
       output.appendLine(`Set up TrueForge: model ${result.model}, agents ${JSON.stringify(result.agents)}`);
       if (result.note) {
@@ -170,12 +180,22 @@ export function activate(context: vscode.ExtensionContext): void {
     agentName: AGENT_NAME,
     baseUrl,
     sessions: () => testSessions?.api ?? sdk().sessions,
-    createSession: async (agentName) => testSessions?.sessionId ?? (await sdk().sessions.create({ agent: { name: agentName } })).data.id,
+    createSession: async (agentName, model) => {
+      if (testSessions) return testSessions.sessionId;
+      // The saved agent carries the primary model. Any other model gets the same manifest with the model swapped.
+      if (model === activeModel) return (await sdk().sessions.create({ agent: { name: agentName } })).data.id;
+      const definition = AGENTS.find((candidate) => candidate.name === agentName);
+      if (!definition) throw new Error(`No agent definition named ${agentName}.`);
+      return createSessionForModel(baseUrl(), definition, model);
+    },
+    models: () => modelChain,
+    firstTokenMs: config().get<number>('firstTokenTimeoutSeconds', 45) * 1000,
     // Checked on every request: TrueForge may have stopped or a setting changed since activation.
     ensureReady: runSetup,
     onChange: () => {
       panel.refresh();
       inline.refresh();
+      showStatus();
       if (controller.isBusy !== wasBusy) {
         wasBusy = controller.isBusy;
         void vscode.commands.executeCommand('setContext', 'forgelens.running', wasBusy);
@@ -244,6 +264,7 @@ export function activate(context: vscode.ExtensionContext): void {
     onReviewOpen: () => void vscode.commands.executeCommand('forgelens.review.open'),
     onReviewApply: () => void vscode.commands.executeCommand('forgelens.review.apply'),
     onUndo: () => void undo(),
+    onSwitchModel: () => void vscode.commands.executeCommand('forgelens.pickModel'),
     onPickMention: () => {
       void pickMention(port).then((mention) => {
         if (mention) panel.insertMention(mention);
@@ -292,6 +313,24 @@ export function activate(context: vscode.ExtensionContext): void {
       }, EDITOR_UNDO_SETTLE_MS);
     }),
     vscode.commands.registerCommand('forgelens.undo', undo),
+    vscode.commands.registerCommand('forgelens.pickModel', async () => {
+      let available: string[];
+      try {
+        available = await listModels(baseUrl());
+      } catch (error) {
+        void vscode.window.showErrorMessage(`ForgeLens: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+      const configured = config().get<string[]>('models', []);
+      const items = available.map((name) => ({
+        label: name,
+        description: name === activeModel ? 'primary now' : configured.includes(name) ? `fallback ${configured.indexOf(name)}` : '',
+      }));
+      const pick = await vscode.window.showQuickPick(items, { title: 'Choose the primary model. The others in forgelens.models stay as fallbacks.' });
+      if (!pick) return;
+      // The picked model goes first; the existing order of the rest is kept as the fallback chain.
+      await config().update('models', [pick.label, ...configured.filter((name) => name !== pick.label)], vscode.ConfigurationTarget.Global);
+    }),
     vscode.commands.registerCommand('forgelens.setup', async () => {
       try {
         const model = await runSetup();
@@ -306,6 +345,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('forgelens.ask', (text: string) => sendToAgent(text)),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('forgelens.panel')) panel.refresh();
+      if (event.affectsConfiguration('forgelens.firstTokenTimeoutSeconds')) {
+        void vscode.window.showInformationMessage('ForgeLens: the new timeout applies after a window reload.');
+      }
       if (event.affectsConfiguration('forgelens.models') || event.affectsConfiguration('forgelens.trueforgeUrl')) {
         void runSetup().catch(() => undefined);
       }

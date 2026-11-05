@@ -329,6 +329,22 @@ body.large-text {
   font-size: 0.9em;
 }
 
+.notice.warning {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  border-left-width: 3px;
+  border-radius: 0.25rem;
+  background: var(--vscode-inputValidation-warningBackground);
+  color: var(--vscode-foreground);
+  font-size: 1em;
+  font-weight: 600;
+}
+
+#switch-model {
+  display: block;
+  margin-top: 0.4rem;
+}
+
 .thread {
   margin: 0 0 0.5rem;
   padding-left: 0.5rem;

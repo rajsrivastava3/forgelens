@@ -6,6 +6,7 @@ import {
   chooseModel,
   instantiateAgent,
   MODEL_PLACEHOLDER,
+  createSessionForModel,
   setUpTrueForge,
   type AgentDefinition,
 } from '../../src/core/trueforge/setup';
@@ -110,7 +111,7 @@ describe('setUpTrueForge', () => {
   it('registers the server, then creates agents with the chosen model', async () => {
     const { fetchFn, calls } = fakeTrueForge(['a/one', 'b/two']);
     const result = await setUpTrueForge({ baseUrl: BASE, mcp, configuredModels: ['b/two'], agents, fetchFn });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       model: 'b/two',
       note: undefined,
       agents: { 'forgelens-agent': 'created', 'forgelens-inline': 'created' },
@@ -142,5 +143,28 @@ describe('setUpTrueForge', () => {
     }) as typeof fetch;
     await expect(setUpTrueForge({ baseUrl: BASE, mcp, configuredModels: [], agents, fetchFn: down })).rejects.toThrow(/not running/);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('the fallback chain and sessions per model', () => {
+  it('lists the configured models TrueForge has, in order', async () => {
+    const { fetchFn } = fakeTrueForge(['a/one', 'b/two', 'c/three']);
+    const mcp = { url: 'http://127.0.0.1:1/mcp', token: 't' };
+    const result = await setUpTrueForge({ baseUrl: BASE, mcp, configuredModels: ['x/gone', 'c/three', 'a/one'], agents: [agent as AgentDefinition], fetchFn });
+    expect(result.model).toBe('c/three');
+    expect(result.chain).toEqual(['c/three', 'a/one']);
+  });
+
+  it('makes a session from the committed manifest with only the model swapped', async () => {
+    const calls: { path: string; body: unknown }[] = [];
+    const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ path: String(input).slice(`${BASE}/api/v1`.length), body: JSON.parse(String(init?.body)) });
+      return Response.json({ data: { id: 'sess-9' } });
+    }) as typeof fetch;
+    expect(await createSessionForModel(BASE, agent as AgentDefinition, 'b/two', fetchFn)).toBe('sess-9');
+    const spec = (calls[0]?.body as { agent: { spec: { model: { name: string }; instructions: string } } }).agent.spec;
+    expect(calls[0]?.path).toBe('/sessions');
+    expect(spec.model.name).toBe('b/two');
+    expect(spec.instructions).toBe(agent.manifest.instructions);
   });
 });
