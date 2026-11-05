@@ -18,10 +18,13 @@ matches "debug flag"), how much of the request a file covers, file and symbol na
 such as `cli.py`, `tests/test_cli.py` and `docs/cli.rst`, the changelog for changes, open editors, and anything you
 `@` mention, which always goes in.
 
-Then it fills a budget of 12k tokens (`forgelens.context.budgetTokens`): the top files get their best code in full,
-the next get signatures only, the rest just a path and a reason, and anything left over is recorded as left out. The
-panel shows this as "Context chosen: N files, X / 12k tokens", with the reason for each file. Type `@` in the panel
-to add a file or symbol.
+Then it fills a budget of 6k tokens (`forgelens.context.budgetTokens`): the top files get their best functions in
+full, with the place in the same file that uses them (such as the list that registers a command) and a short outline
+of the rest (definitions named like the shown code first, or a doc's section titles). The next files get signatures
+only, the rest just a path and a reason, and anything left over is recorded as left out. A file whose own match is
+weak stays only with a strong link to one of the two best hits. The panel shows this as "Context chosen: N files,
+X / 6k tokens", with the reason for each file. Type `@` in the panel to add a file or symbol.
+`npx tsx scripts/show-pack.ts <repo> "<request>"` prints the pack for a request.
 
 ## Running tests before review
 
