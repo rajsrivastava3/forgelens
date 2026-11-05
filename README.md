@@ -7,7 +7,29 @@ A VS Code coding agent whose agent loop runs on [TrueForge](https://github.com/t
 **Starting point:** from scratch. **Licence:** MIT.
 
 Status: in development. The agent can read, search, answer and propose edits, and you review them hunk by hunk.
-Inline edit works the same way. The context engine and model fallback are next.
+Inline edit works the same way, and the context engine chooses what the agent reads first. Model fallback is next.
+
+## How the agent chooses what to read
+
+The strategy is budgeted multi-signal retrieval. ForgeLens indexes the workspace in the background, in small slices
+so the editor stays free, and keeps the index in VS Code's extension storage, never in your folder. It updates when
+you save. Before each agent request it ranks files by word matches (BM25, with identifiers split so `get_debug_flag`
+matches "debug flag"), how much of the request a file covers, file and symbol names, imports, test and doc pairings
+such as `cli.py`, `tests/test_cli.py` and `docs/cli.rst`, the changelog for changes, open editors, and anything you
+`@` mention, which always goes in.
+
+Then it fills a budget of 12k tokens (`forgelens.context.budgetTokens`): the top files get their best code in full,
+the next get signatures only, the rest just a path and a reason, and anything left over is recorded as left out. The
+panel shows this as "Context chosen: N files, X / 12k tokens", with the reason for each file. Type `@` in the panel
+to add a file or symbol.
+
+## Running tests before review
+
+`run_command` with target `staged` runs in a private copy of the workspace with the staged edits applied, kept in
+extension storage, so tests can pass or fail before you review anything. Target `workspace` runs in the real folder.
+Commands on `forgelens.commands.autoApprove` (`pytest`, `python -m pytest`, `git status`, `git diff`) are answered
+automatically, still through the TrueForge approval, and the card says "auto-approved (safe list)". Anything else
+asks you, including any command with shell syntax such as `;` or `|`. Stop ends a running command.
 
 ## Inline edit
 
@@ -30,6 +52,10 @@ review, ForgeLens recomputes the diff and asks again rather than overwriting it.
 made after the apply. Stop discards everything staged.
 
 The undo stack lasts until the window closes.
+
+**Reading a diff on a small screen.** Word wrap is on for diffs, and a review shows them inline
+(`forgelens.review.inlineDiff`, on by default), so nothing needs horizontal scrolling. VS Code has no per-tab option
+for this, so ForgeLens changes your `diffEditor.renderSideBySide` setting during a review and puts it back afterwards.
 
 **Ctrl+Z after an apply.** In an editor showing one of the edited files, it reverts every edited file in that apply
 and saves them, and the card shows the revert. In the agent panel it does the same as the Undo button. With no
