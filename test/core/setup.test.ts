@@ -178,6 +178,8 @@ describe('agent mode is told to keep costs down', () => {
     expect(text).toContain('at most 150 lines a call');
     expect(text).toContain('Never read a range you have already read');
     expect(text).toContain('one stage_edit per file, with several edits in it');
+    expect(text).toContain('make all of them in the same message');
+    expect(text).toContain('Plan and gather, in one message');
     expect(text).toContain('Call run_command once with target "staged"');
     expect(text).toContain('Call apply_changes once');
   });
