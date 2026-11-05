@@ -140,7 +140,7 @@
           },
           "default": [
             "google-gemini/gemini-3-8-flash",
-            "gemini-free/gemini-flash-lite-latest"
+            "google-gemini/gemini-3-6-flash"
           ],
           "markdownDescription": "TrueForge model names, in order. The first that TrueForge has is the primary; the rest are fallbacks, used automatically when it fails. Pick from what TrueForge has with **ForgeLens: Choose model** (the model in the status bar)."
         },
@@ -156,7 +156,7 @@
         },
         "forgelens.context.budgetTokens": {
           "type": "number",
-          "default": 12000,
+          "default": 6000,
           "minimum": 1000,
           "description": "How many tokens of code ForgeLens adds to each agent request as the Context Pack."
         },
