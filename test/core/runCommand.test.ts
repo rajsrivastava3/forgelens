@@ -299,3 +299,19 @@ describe('a real test run in the copy', () => {
     }
   });
 });
+
+describe('the path a command runs from', () => {
+  it.runIf(process.platform === 'win32')('uses the system spelling, even if the editor reports a lowercase drive', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'forgelens drive '));
+    try {
+      const lower = dir.charAt(0).toLowerCase() + dir.slice(1);
+      const port = new NodeEditorPort(lower);
+      const shadow = new ShadowWorkspace(() => lower, path.join(dir, '..', `${path.basename(dir)}-shadow`), () => Promise.resolve([]), new Changeset(port));
+      const out = await runCommandTool({ workspaceRoot: () => lower, shadow, runner: new CommandRunner() }, { command: 'node -e "console.log(process.cwd())"', target: 'workspace' });
+      expect(out).toContain(dir.charAt(0).toUpperCase() + ':');
+      expect(out).not.toContain(`${dir.charAt(0).toLowerCase()}:\\`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

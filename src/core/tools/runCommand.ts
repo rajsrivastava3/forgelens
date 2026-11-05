@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import * as path from 'node:path';
 import type { ShadowWorkspace } from '../shadow/shadowWorkspace';
 import { resolveInsideWorkspace } from './nodeEditorPort';
@@ -146,8 +146,10 @@ export async function runCommandTool(deps: RunCommandDeps, args: RunCommandArgs)
     runRoot = root;
     where = `Ran in a private copy of the workspace with ${overlaid} staged file${overlaid === 1 ? '' : 's'} applied. The real workspace was not touched.`;
   }
-  const cwd = args.cwd ? resolveInsideWorkspace(runRoot, args.cwd) : runRoot;
-  const result = await deps.runner.run(args.command, cwd, commandEnvironment(runRoot, workspaceRoot), timeoutS);
+  // VS Code reports d:\\folder while the system says D:\\Folder. Code that compares paths, as some tests do, needs one spelling.
+  const realRoot = realpathSync.native(runRoot);
+  const cwd = args.cwd ? resolveInsideWorkspace(realRoot, args.cwd) : realRoot;
+  const result = await deps.runner.run(args.command, cwd, commandEnvironment(realRoot, workspaceRoot), timeoutS);
 
   const status = result.cancelled
     ? 'Stopped by the user.'
