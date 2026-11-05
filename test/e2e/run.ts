@@ -1302,6 +1302,66 @@ async function scenarioPanelMentions(): Promise<void> {
   results['panelMentions'] = { typed, label: row.statusText };
 }
 
+/** The primary refuses (402), the fallback answers. Then every model fails, which offers Switch model. */
+async function scenarioFallbackBanner(): Promise<void> {
+  const settings = vscode.workspace.getConfiguration('forgelens');
+  const before = settings.inspect<string[]>('models')?.globalValue;
+  await settings.update('models', ['google-gemini/gemini-3-8-flash', 'gemini-free/gemini-flash-lite-latest'], vscode.ConfigurationTarget.Global);
+  await sleep(2500); // Setup runs again for the new list.
+  try {
+    let turn = 0;
+    const plan = (failures: number): unknown => ({
+      api: {
+        createTurnStream: () => {
+          turn += 1;
+          const failing = turn <= failures;
+          return Promise.resolve({
+            withMetadata: () =>
+              (async function* () {
+                if (failing) {
+                  yield { data: { type: 'turn.done', id: 'd' + String(turn), state: { status: 'error', message: '[Model Error] Request failed (402): Your prepayment credits are depleted.' } }, id: '1' };
+                  return;
+                }
+                const text = { type: 'model.message', id: 'm' + String(turn), threadId: 'main', createdAt: new Date().toISOString(), content: 'Answered by the fallback model.', toolCalls: [] };
+                yield { data: text, id: '1' };
+                yield { data: { type: 'turn.done', id: 'd' + String(turn), state: { status: 'done', output: text } }, id: '2' };
+              })(),
+          });
+        },
+        cancel: () => Promise.resolve(),
+      },
+      sessionId: 'scripted-session',
+    });
+
+    await vscode.commands.executeCommand('forgelens.internal.useSessions', plan(1));
+    await newChat();
+    await vscode.commands.executeCommand('forgelens.ask', 'Where is get_debug_flag defined?');
+    await sleep(600);
+    const banner = await read('.notice.warning');
+    await shot('p5-1-fallback-banner');
+    check(banner.clicked, 'the fallback banner is on screen');
+    check(banner.statusText === 'Primary model failed: billing refused the request (402). Switched to gemini-free/gemini-flash-lite-latest automatically.', 'the banner text: ' + banner.statusText);
+    const { view } = await state();
+    check(view.status === 'done' && view.model === 'gemini-free/gemini-flash-lite-latest', 'the fallback finished the request: ' + view.status + ' ' + String(view.model));
+
+    turn = 0;
+    await vscode.commands.executeCommand('forgelens.internal.useSessions', plan(99));
+    await newChat();
+    await vscode.commands.executeCommand('forgelens.ask', 'Where is get_debug_flag defined?');
+    await sleep(600);
+    const error = await read('#error-text');
+    const button = await read('#switch-model');
+    await shot('p5-2-every-model-failed');
+    check(error.statusText.startsWith('Every configured model failed'), 'one clear message: ' + error.statusText);
+    check(button.clicked, 'Switch model is on screen');
+    check((await gitStatus()) === '', 'the workspace is unchanged');
+    results['fallbackBanner'] = { banner: banner.statusText, finalError: error.statusText };
+  } finally {
+    await settings.update('models', before, vscode.ConfigurationTarget.Global);
+    await vscode.commands.executeCommand('forgelens.internal.useSessions', undefined);
+  }
+}
+
 /** Closes the window mid-run. launch.mjs then asks TrueForge whether the turn was stopped. */
 async function scenarioClose(): Promise<void> {
   await newChat();
@@ -1366,6 +1426,7 @@ export async function run(): Promise<void> {
       'agent-flow': scenarioAgentFlow,
       'command-asks': scenarioCommandAsks,
       'panel-mentions': scenarioPanelMentions,
+      'fallback-banner': scenarioFallbackBanner,
       'task-a-live': scenarioTaskALive,
       offline: scenarioOffline,
       close: scenarioClose,
