@@ -126,6 +126,29 @@ On 5 November the Gemini project showed tier "Paid 1" with a prepaid balance of 
 
 Tested: gemini-3-8-flash, gemini-flash-lite-latest, gemini-3-1-flash-lite, gemini-3-5-flash-lite. So moving a project to prepaid ends its free rotation until credit arrives, and a fallback on the same key does not survive this. A second provider would.
 
+## 6 November: paid primary, free fallback
+
+**Primary `google-gemini/gemini-3-8-flash` (paid, prepay).** Exact Task A, live, after one fix to the inline agent's
+instructions: 4 of 4 passed, each 3 requests, 23 to 35 s from instruction to diff, about Rs 2.50 to 2.90 each. Before
+the fix, 3 of 3 failed: the model spent all 15 steps searching for docstring conventions and never staged an edit
+(about Rs 8.70 each).
+
+**Task B, one live run: no result, about Rs 123.** 1,663,659 input tokens in one turn. The explorer subagent made
+about 30 reads, the main agent re-read most of them, and it never staged an edit before trying out code with
+`run_command`, which needs approval. The agent instructions now bound the explorer to 10 tool calls, tell the main
+agent to trust its list and stage, and keep `run_command` for tests. Not yet verified live.
+
+TrueForge reports no cost for these models, so cost is worked out from tokens at Google's published paid prices
+($0.75 per million input tokens, $3.75 per million output, including thinking, for both 3.8 Flash and 3.6 Flash,
+to 31 December 2026), at Rs 90 to the dollar, counting reasoning tokens again on top of output. The estimate runs high.
+
+**Fallback `gemini-free/gemini-flash-lite-latest` (custom OpenAI-compatible provider, free key).** A plain request
+works. Tool calls fail on the second request with `400: Bad Request`. The native `google-gemini` provider stores
+Gemini's `thought_signature` with each tool call (`provider_specific_fields`) and sends it back. The custom
+provider's stored calls have no such field, and the newer Gemini models expect it back. TrueForge allows only one
+provider per built-in type, so a second native Gemini provider for the free key is not possible. This fallback cannot
+complete an edit as configured.
+
 ## What this means
 
 - The extension cannot assume a named model is usable on a given day, so ModelChain needs to treat 429

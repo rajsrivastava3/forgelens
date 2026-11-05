@@ -85,6 +85,44 @@ model requests. For a real agent run, pass `live` or `task-a-live` as the scenar
 `node test/e2e/launch.mjs <workDir> task-a-live`. It downloads its own copy of VS Code, or set `VSCODE_EXE` to use
 another. It stops at the start if the system drive or the work folder's drive has under 2 GB free.
 
+## Models and automatic fallback
+
+`forgelens.models` is an ordered list of TrueForge model names: the first one TrueForge has is the primary, and
+the rest are fallbacks. Click the model in the status bar to choose another primary from everything TrueForge
+lists; the rest keep their order.
+
+Every request, in agent mode and inline edit, goes through the same chain:
+
+- A billing refusal (402), a bad key (401, 403, or a 400 that says so), an unknown model (404) or a request the
+  provider will not take (400) moves to the next model at once.
+- A quota limit (429), an overloaded provider (5xx), an unreachable provider, or no output within
+  `forgelens.firstTokenTimeoutSeconds` (45 s, before the first output only) is retried twice, after about 1 s and
+  3 s with some randomness, and then moves to the next model.
+- The next model gets a new session with the same agent and only the model swapped, and the same request with the
+  same Context Pack. Anything the failed attempt staged is dropped, so nothing from it can reach disk.
+- The panel says so: "Primary model failed: invalid API key (401). Switched to <model> automatically." The status
+  bar shows the model with "(fallback)".
+- If every model fails, one message says why, with a **Switch model** button. If TrueForge itself is down, the
+  message says how to start it.
+
+## Recording Task C
+
+Task C needs a primary that fails. Keep the real providers as they are and add a broken one beside them:
+
+1. Open <http://localhost:8790>, **Settings > Models > Add custom provider**, and fill in:
+   name `broken-primary`, base URL `https://generativelanguage.googleapis.com/v1beta/openai/`, API key
+   `not-a-real-key`, model ID `gemini-3.8-flash`, model name `gemini-3-8-flash`, context length `1048576`, max output
+   `65536`. (`npm run rehearse:c` creates the same entry for you.)
+2. In VS Code, click the model in the status bar and choose `broken-primary/gemini-3-8-flash`. Your previous
+   primary moves to second place and becomes the fallback.
+3. Record Task A as usual. The banner appears within about a second, the fallback finishes the edit, and the review
+   opens as normal.
+4. To restore: click the model in the status bar and choose your real primary again. Delete `broken-primary` under
+   **Settings > Models** if you no longer need it.
+
+For an unreachable endpoint instead, give `broken-primary` the base URL `http://127.0.0.1:59999/v1`. That shows two
+quick retries before the switch.
+
 ## Rehearsing the tasks without a window
 
 `npm run rehearse:a` and `npm run rehearse:b` run the exact tasks on a throwaway clone of Flask, with no VS Code window, on the same code as the extension. The only stand-in is the person, who accepts every hunk. Each run then checks the result: the exact verification commands, the tests, and for Task B the new command against a small app. Pass `--models a/b,c/d` to try models in order, and `--scripted good` or `--scripted bad` for a dry run with no model, which proves the checks catch a wrong answer. Results go to `out/rehearse-*.json`. A run stops at the start if under 1 GB of RAM or 2 GB of disk is free.
