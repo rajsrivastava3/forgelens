@@ -129,6 +129,9 @@ describe('failure classification', () => {
 
   it('gives a short reason for the banner', () => {
     expect(shortReason(describeTurnError('[Model Error] Request failed (401): Unauthorized.'))).toBe('invalid API key (401)');
+    expect(shortReason(describeTurnError('[Model Error] Request failed (400): API key not valid. Please pass a valid API key.'))).toBe('invalid API key (400)');
+    expect(shortReason(describeTurnError('[Model Error] Request failed (400): Bad Request'))).toBe('request rejected (400), possibly an invalid key');
+    expect(shortReason(describeTurnError('[Model Error] Request failed (400): Unsupported field: foo.'))).toBe('request rejected (400)');
   });
 });
 
@@ -141,7 +144,7 @@ describe('ModelChain in the controller', () => {
     expect(controller.view.status).toBe('done');
     expect(controller.activeModel).toBe(FALLBACK);
     expect(controller.view.model).toBe(FALLBACK);
-    expect(notices(controller)[0]).toMatchObject({ tone: 'warning', text: `Primary model failed: billing refused the request (402). Switched to ${FALLBACK} automatically.` });
+    expect(notices(controller)[0]).toMatchObject({ tone: 'warning', text: 'Primary model failed: billing refused the request (402). Switched to gemini-flash-lite-latest automatically.' });
     expect(discard).toHaveBeenCalled();
     expect(server.createSession.mock.calls.map((call) => call[1])).toEqual([PRIMARY, FALLBACK]);
   });

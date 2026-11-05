@@ -133,7 +133,8 @@ export function shortReason(error: DescribedTurnError): string {
     case 'timeout':
       return 'no response in time';
     case 'bad-request':
-      return `request rejected${code}`;
+      // A custom OpenAI-compatible endpoint answers a bad key with a bare "Bad Request", nothing more.
+      return /Bad Request\.?\s*$/i.test(error.raw) ? `request rejected${code}, possibly an invalid key` : `request rejected${code}`;
     default:
       return error.message;
   }

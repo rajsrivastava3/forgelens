@@ -181,7 +181,8 @@ export class AgentController {
         const next = chain[index + 1];
         if (next) {
           const who = index === 0 ? 'Primary model' : `Fallback model ${model}`;
-          this.builder.fallback(`${who} failed: ${shortReason(error)}. Switched to ${next} automatically.`);
+          // The model's own name, without its provider, keeps the banner on one or two lines.
+          this.builder.fallback(`${who} failed: ${shortReason(error)}. Switched to ${next.split('/').pop() ?? next} automatically.`);
           this.options.onChange();
           break;
         }
