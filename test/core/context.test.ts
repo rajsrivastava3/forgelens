@@ -192,7 +192,7 @@ describe('retrieve', () => {
     expect(byPath.get('docs/cli.rst')?.reason).toContain('documents src/pkg/cli.py');
     expect(byPath.get('src/pkg/core.py')?.reason).toContain('imported by src/pkg/cli.py');
     expect(byPath.get('docs/usage.rst')?.reason).toContain('mentions command_list');
-    expect(byPath.get('src/pkg/cli.py')?.reason).toContain('most relevant: command_list');
+    expect(byPath.get('src/pkg/cli.py')?.reason).toContain('defines command_list');
     expect(byPath.has('src/pkg/other.py')).toBe(false);
   });
 

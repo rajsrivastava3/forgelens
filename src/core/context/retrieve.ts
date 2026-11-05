@@ -31,7 +31,7 @@ const SYMBOL_MATCH_BOOST = 1.2;
 const CHANGE_WORDS = /\b(add|adds|adding|new|fix|fixes|change|changes|remove|removes|rename|renames|deprecate|support|implement)\b/i;
 const DATA_FILE_WEIGHT = 0.35;
 const MAX_NAMES = 3;
-const MAX_MATCHES = 4;
+const MAX_MATCHES = 3;
 
 interface Candidate {
   path: string;
@@ -54,13 +54,22 @@ function fileScore(chunks: readonly { score: number; matched: Set<string> }[], t
   return base * (1 + (3 * covered) / Math.max(1, termCount));
 }
 
-function describe(candidate: Candidate): string {
+/** One plain phrase per signal, in the order a person would care about. */
+function describe(candidate: Candidate, rarity: (word: string) => number): string {
   const parts: string[] = [];
   if (candidate.mentioned) parts.push('mentioned by you');
-  parts.push(...candidate.relations.slice(0, 2));
-  if (candidate.names.length > 0) parts.push(`most relevant: ${candidate.names.slice(0, MAX_NAMES).join(', ')}`);
-  // A joined form such as built-in repeats its parts, and reads badly in a list.
-  const matched = [...candidate.matched].filter((word) => !/[-_]/.test(word)).slice(0, MAX_MATCHES);
+  const isTest = isTestFile(candidate.path);
+  const isCode = !isTest && !isDocFile(candidate.path);
+  // What a code file defines says more than which doc pointed at it. A test's own name adds nothing to its pairing.
+  const defined = isCode ? [...new Set(candidate.names.map((name) => name.split('.')[0] ?? name))].slice(0, MAX_NAMES) : [];
+  if (defined.length > 0) parts.push(`defines ${defined.join(', ')}`);
+  const relations = defined.length > 0 ? candidate.relations.filter((relation) => !relation.startsWith('code for ')) : candidate.relations;
+  parts.push(...relations.slice(0, 2));
+  // The rarest words explain the choice best. A joined form such as built-in only repeats its parts.
+  const matched = [...candidate.matched]
+    .filter((word) => !/[-_]/.test(word))
+    .sort((a, b) => rarity(a) - rarity(b))
+    .slice(0, MAX_MATCHES);
   if (matched.length > 0) parts.push(`matches ${matched.join(', ')}`);
   return parts.join('; ') || 'listed for context';
 }
@@ -111,7 +120,7 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
       const weight = pair.relation === 'test' ? 0.8 : pair.relation === 'doc' ? 0.7 : 0.6;
       entry.score += seed.score * weight;
       entry.relations.push(
-        pair.relation === 'test' ? `test pair of ${seed.path}` : pair.relation === 'doc' ? `documents ${seed.path}` : `code for ${seed.path}`,
+        pair.relation === 'test' ? `test pair of ${seed.path}` : pair.relation === 'doc' ? `documents ${seed.path}` : `the code ${seed.path} describes`,
       );
     }
     // Docs that talk about this module, even under another file name.
@@ -183,7 +192,7 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
   return kept.map((entry) => ({
     path: entry.path,
     score: entry.score,
-    reason: describe(entry),
+    reason: describe(entry, (word) => index.postings.get(word)?.length ?? 0),
     mentioned: entry.mentioned,
     chunks: entry.chunks.length > 0 ? entry.chunks : (index.files.get(entry.path)?.chunks.map((_, i) => i).slice(0, 3) ?? []),
   }));
