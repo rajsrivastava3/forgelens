@@ -1,0 +1,279 @@
+/**
+ * Runs the exact tasks with no VS Code window: the same controller, MCP server, review flow and context engine as
+ * the extension, on the Node editor port. The only stand-in is the person, who accepts every hunk.
+ */
+import { execFile, execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { promisify } from 'node:util';
+import { TrueForge } from '@truefoundry/trueforge-sdk';
+import { APPLY_TOOL, ReviewFlow } from '../../src/core/changeset/reviewFlow';
+import { ContextEngine } from '../../src/core/context/engine';
+import { startEditorMcpServer, type RunningEditorMcpServer, MCP_TOKEN_HEADER } from '../../src/core/mcp/server';
+import { NodeEditorPort } from '../../src/core/tools/nodeEditorPort';
+import { CommandRunner, DEFAULT_SAFE_COMMANDS, isSafeCommand, RUN_COMMAND_TOOL } from '../../src/core/tools/runCommand';
+import { AgentController } from '../../src/core/trueforge/agentController';
+import type { ViewItem } from '../../src/core/trueforge/runView';
+import { setUpTrueForge, type AgentDefinition } from '../../src/core/trueforge/setup';
+import type { SessionsApi } from '../../src/core/trueforge/turnRunner';
+
+export const exec = promisify(execFile);
+export const ROOT = path.resolve(__dirname, '../..');
+export const FLASK = path.resolve(ROOT, '../flask');
+export const VENV_SCRIPTS = path.join(FLASK, '.venv/Scripts');
+export const PYTHON = path.join(VENV_SCRIPTS, 'python.exe');
+export const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
+export const BASE_URL = process.env['TRUEFORGE_BASE_URL'] ?? 'http://localhost:8790';
+const MCP_PORT = Number(process.env['FORGELENS_MCP_PORT'] ?? 8799);
+const MIN_FREE_RAM_MB = 1000;
+const MIN_FREE_DISK_GB = 2;
+
+export function arg(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+/** Stops before starting, rather than being stopped halfway by the machine. */
+export function checkResources(): void {
+  const freeMb = Math.round(os.freemem() / 1024 ** 2);
+  if (freeMb < MIN_FREE_RAM_MB) {
+    console.error(`Stopped: ${freeMb} MB of RAM free, and a headless run needs ${MIN_FREE_RAM_MB} MB.`);
+    process.exit(3);
+  }
+  const { bavail, bsize } = statfsSync(`${process.env['SystemDrive'] ?? 'C:'}\\`);
+  const freeGb = (Number(bavail) * Number(bsize)) / 1024 ** 3;
+  if (freeGb < MIN_FREE_DISK_GB) {
+    console.error(`Stopped: ${freeGb.toFixed(1)} GB of disk free, and a run needs ${MIN_FREE_DISK_GB} GB.`);
+    process.exit(3);
+  }
+  console.log(`Resources: ${freeMb} MB RAM free, ${freeGb.toFixed(1)} GB disk free.`);
+}
+
+/** A fresh throwaway clone. The real flask folder is only ever the source of the clone. */
+export function freshClone(workDir: string): string {
+  const clone = path.join(workDir, 'flask-clone');
+  rmSync(clone, { recursive: true, force: true });
+  mkdirSync(workDir, { recursive: true });
+  execFileSync('git', ['clone', '--quiet', '-c', 'core.autocrlf=false', '-c', 'advice.detachedHead=false', FLASK, clone]);
+  if (path.resolve(clone).toLowerCase().startsWith(path.resolve(FLASK).toLowerCase())) throw new Error('The clone is inside the real flask folder.');
+  return clone;
+}
+
+export function resetClone(clone: string): void {
+  execFileSync('git', ['-C', clone, 'checkout', '--quiet', '--', '.']);
+  execFileSync('git', ['-C', clone, 'clean', '-fdq']);
+}
+
+export function verifyEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: `${VENV_SCRIPTS}${path.delimiter}${process.env['PATH'] ?? ''}`, PYTHONPATH: 'src', PYTHONDONTWRITEBYTECODE: '1', ...extra };
+}
+
+function loadAgents(): AgentDefinition[] {
+  return ['forgelens-agent', 'forgelens-inline'].map((name) => JSON.parse(readFileSync(path.join(ROOT, 'agents', `${name}.json`), 'utf8')) as AgentDefinition);
+}
+
+export interface ToolRecord {
+  name: string;
+  thread: string;
+  args: string;
+  status: string;
+  autoApproved: boolean;
+  result: string;
+}
+
+export interface RunRecord {
+  model: string;
+  status: string;
+  error: string | undefined;
+  sessionUrl: string | undefined;
+  seconds: number;
+  /** From the instruction until the review opened, which is when the diff exists. */
+  secondsToDiff: number | undefined;
+  requests: number;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  threads: string[];
+  tools: ToolRecord[];
+  files: string[];
+  hunks: number;
+  reviewCard: string | undefined;
+  reviewNote: string | undefined;
+  contextFiles: string[];
+  contextTokens: string | undefined;
+  answer: string;
+  log: string[];
+}
+
+export interface Harness {
+  workspace: string;
+  flow: ReviewFlow;
+  engine: ContextEngine;
+  port: NodeEditorPort;
+  controller: AgentController;
+  log: (message: string) => void;
+  callTool: (name: string, args: unknown) => Promise<string>;
+  /** Everything gathered so far. */
+  record: (seconds: number) => RunRecord;
+  close: () => Promise<void>;
+}
+
+function collectTools(items: readonly ViewItem[], thread = 'main'): ToolRecord[] {
+  return items.flatMap((item): ToolRecord[] => {
+    if (item.kind === 'thread') return collectTools(item.items, item.title);
+    if (item.kind !== 'tool') return [];
+    return [{ name: item.name, thread, args: item.argsSummary, status: item.status, autoApproved: item.autoApproved === true, result: item.result ?? '' }];
+  });
+}
+
+/** Makes `sessionsOverride` the server, for a dry run with no model. */
+export async function startHarness(workspace: string, model: string, sessionsOverride?: (callTool: Harness['callTool']) => SessionsApi): Promise<Harness> {
+  const port = new NodeEditorPort(workspace);
+  const logLines: string[] = [];
+  const log = (message: string): void => {
+    logLines.push(message);
+    if (process.env['REHEARSE_VERBOSE']) console.log(`  ${message}`);
+  };
+  const runner = new CommandRunner();
+  const engine = new ContextEngine(port, { log });
+  const token = randomBytes(24).toString('hex');
+  let started = Date.now();
+  let firstReviewMs: number | undefined;
+  let hunks = 0;
+  let files: string[] = [];
+  let requests = 0;
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let costUsd = 0;
+  const messageIds = new Set<string>();
+
+  const flow: ReviewFlow = new ReviewFlow(port, { onCard: (card) => controller.updateReview(card), onWarning: log });
+  // The server is created before the controller exists, as the extension does it.
+  const mcp: RunningEditorMcpServer = await startEditorMcpServer({
+    port,
+    flow,
+    context: engine,
+    runner,
+    token,
+    listenPort: MCP_PORT,
+    shadowRoot: path.join(path.dirname(workspace), 'shadow'),
+    onToolCall: (call) => log(`[tool] ${call.tool} ok=${String(call.ok)}`),
+  });
+  const callTool: Harness['callTool'] = async (name, args) => {
+    const response = await fetch(mcp.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', [MCP_TOKEN_HEADER]: token },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    });
+    const body = (await response.json()) as { result?: { content: { text: string }[]; isError?: boolean } };
+    return body.result?.content[0]?.text ?? JSON.stringify(body);
+  };
+
+  const client = new TrueForge({ baseUrl: BASE_URL, timeoutInSeconds: 600 });
+  const scripted = sessionsOverride?.(callTool);
+  const controller: AgentController = new AgentController({
+    agentName: 'forgelens-agent',
+    baseUrl: () => BASE_URL,
+    sessions: () => scripted ?? client.sessions,
+    createSession: async (agentName) => (scripted ? `scripted-${randomBytes(4).toString('hex')}` : (await client.sessions.create({ agent: { name: agentName } })).data.id),
+    ensureReady: async () => {
+      if (scripted) return `scripted (${model})`;
+      const result = await setUpTrueForge({ baseUrl: BASE_URL, mcp: { url: mcp.url, token }, configuredModels: [model], agents: loadAgents() });
+      if (result.model !== model) throw new Error(`TrueForge has no model ${model}.`);
+      return result.model;
+    },
+    onChange: () => undefined,
+    autoApprove: (approval) => approval.call.name === RUN_COMMAND_TOOL && isSafeCommand(String(approval.call.args['command'] ?? ''), DEFAULT_SAFE_COMMANDS),
+    // The person in this script accepts every hunk at once. All else is what the extension does.
+    reviewApproval: (approval, signal) => {
+      if (approval.call.name !== APPLY_TOOL) return undefined;
+      const decision = flow.requestReview(signal);
+      noteReview();
+      if (flow.isReviewing) {
+        flow.setAll('accepted');
+        void flow.applyDecisions();
+      }
+      return decision;
+    },
+    discardStaged: () => {
+      flow.discard();
+      runner.cancelAll();
+    },
+    onEvent: (event) => {
+      if (event.type === 'model.message' && !messageIds.has(event.id)) {
+        messageIds.add(event.id);
+        requests += 1;
+      }
+      if (event.type === 'turn.done') {
+        const metrics = 'metrics' in event.state ? event.state.metrics : undefined;
+        tokensIn += metrics?.totalInputTokens ?? 0;
+        tokensOut += metrics?.totalOutputTokens ?? 0;
+        costUsd += metrics?.totalCostInUsd ?? 0;
+      }
+    },
+  });
+  const noteReview = (): void => {
+    firstReviewMs ??= Date.now() - started;
+    if (flow.changeset.files.length > 0) {
+      files = flow.changeset.files.map((file) => file.path);
+      hunks = flow.changeset.hunks.length;
+    }
+  };
+
+  return {
+    workspace,
+    flow,
+    engine,
+    port,
+    controller,
+    log,
+    callTool,
+    record: (seconds) => {
+      const { view } = controller;
+      const review = [...view.items].reverse().find((item) => item.kind === 'review');
+      const context = view.items.find((item) => item.kind === 'context');
+      const threads = view.items.flatMap((item) => (item.kind === 'thread' ? [item.title] : []));
+      return {
+        model,
+        status: view.status,
+        error: view.error,
+        sessionUrl: view.sessionUrl,
+        seconds,
+        secondsToDiff: firstReviewMs === undefined ? undefined : firstReviewMs / 1000,
+        requests,
+        tokensIn,
+        tokensOut,
+        costUsd,
+        threads,
+        tools: collectTools(view.items),
+        files,
+        hunks,
+        reviewCard: review?.kind === 'review' ? review.text : undefined,
+        reviewNote: review?.kind === 'review' ? review.warning : undefined,
+        contextFiles: context?.kind === 'context' ? context.items.map((item) => `${item.mode}: ${item.path}`) : [],
+        contextTokens: context?.kind === 'context' ? `${context.usedTokens} of ${context.budgetTokens}` : undefined,
+        answer: view.items.flatMap((item) => (item.kind === 'text' ? [item.text] : [])).join('\n'),
+        log: logLines,
+      };
+    },
+    close: async () => {
+      engine.dispose();
+      await mcp.close();
+      started = Date.now();
+    },
+  };
+}
+
+/** A quota or billing refusal, as opposed to the task going wrong. */
+export function isModelBlocked(error: string | undefined): boolean {
+  return /\b(429|402)\b|quota|prepayment|credits are depleted/i.test(error ?? '');
+}
+
+export function writeResults(name: string, results: unknown): void {
+  const file = path.join(ROOT, 'out', `${name}.json`);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(results, null, 2));
+  console.log(`Full results: ${file}`);
+}

@@ -1,13 +1,10 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { ReviewFlow } from '../core/changeset/reviewFlow';
-import { buildInlinePrompt, finishInlineEdit, inlineDisplayText, readSelection, type InlineTarget } from '../core/inline/inlineEdit';
-import { parseMentions, resolveMentions } from '../core/inline/mentions';
+import { sendInlineEdit, type InlineTarget } from '../core/inline/inlineEdit';
 import type { EditorPort } from '../core/tools/editorPort';
 import type { AgentController } from '../core/trueforge/agentController';
 import { pickMention } from './mentionPicker';
-
-const INLINE_AGENT = 'forgelens-inline';
 
 export interface InlineEditOptions {
   controller: AgentController;
@@ -67,20 +64,12 @@ export class InlineEdit implements vscode.Disposable {
     if (!instruction) return;
 
     const target: InlineTarget = { path: relative, startLine, endLine: lastLine, language: document.languageId, instruction };
-    const mentions = await resolveMentions(port, parseMentions(instruction));
-    const prompt = buildInlinePrompt(target, readSelection(document.getText(), target), mentions);
-    const reviewsAtStart = flow.reviewsStarted;
 
     this.showProgress(editor, startLine, lastLine);
     try {
       await vscode.commands.executeCommand('workbench.view.extension.forgelens');
       await vscode.window.showTextDocument(document, { viewColumn: editor.viewColumn, selection, preserveFocus: false });
-      await controller.send(prompt, {
-        agentName: INLINE_AGENT,
-        display: inlineDisplayText(target),
-        freshSession: true,
-        afterTurn: (output, signal) => finishInlineEdit({ flow, target, output, reviewsAtStart, signal, log }),
-      });
+      await sendInlineEdit({ controller, flow, port, log }, target, document.getText());
     } finally {
       this.hideProgress(editor);
     }

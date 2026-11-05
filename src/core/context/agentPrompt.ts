@@ -1,4 +1,5 @@
 import { parseMentions } from '../inline/mentions';
+import type { AgentController } from '../trueforge/agentController';
 import type { ContextEngine } from './engine';
 import { DEFAULT_BUDGET_TOKENS, formatPack, type PackMode, type PackResult } from './packer';
 
@@ -70,4 +71,25 @@ export async function buildAgentPrompt(engine: ContextEngine, text: string, opti
     prompt: `${formatPack(pack)}${missing}\n\n## Request\n${text}`,
     card: contextCard(pack, notFound),
   };
+}
+
+/** One request in agent mode: the Context Pack goes first, and the panel shows only what was typed. */
+export function sendAgentRequest(
+  controller: AgentController,
+  engine: ContextEngine,
+  text: string,
+  options: () => AgentPromptOptions,
+  log: (message: string) => void,
+): Promise<void> {
+  return controller.send(text, {
+    prepare: async (message) => {
+      try {
+        return await buildAgentPrompt(engine, message, options());
+      } catch (error) {
+        // The agent can still search for itself, so a failed pack should not stop the request.
+        log(`Context Pack failed: ${String(error)}`);
+        return { prompt: message };
+      }
+    },
+  });
 }

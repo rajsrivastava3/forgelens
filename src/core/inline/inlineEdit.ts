@@ -1,6 +1,8 @@
 import { dominantEol, splitKeepingEol } from '../changeset/hunks';
 import type { ReviewFlow } from '../changeset/reviewFlow';
-import type { ResolvedMention } from './mentions';
+import type { EditorPort } from '../tools/editorPort';
+import type { AgentController } from '../trueforge/agentController';
+import { parseMentions, resolveMentions, type ResolvedMention } from './mentions';
 
 export const CONTEXT_LINES = 20;
 /** Below this overlap with the selection, a code block is about something else, such as a shell command. */
@@ -188,4 +190,27 @@ export async function finishInlineEdit(options: FinishInlineOptions): Promise<st
   const decision = await flow.requestReview(signal, note);
   if (decision.allow) await flow.applyApproved(`Inline edit of ${target.path}, lines ${target.startLine}-${target.endLine}`);
   return undefined;
+}
+
+export const INLINE_AGENT = 'forgelens-inline';
+
+export interface InlineDeps {
+  controller: AgentController;
+  flow: ReviewFlow;
+  port: EditorPort;
+  log: (message: string) => void;
+}
+
+/** One inline edit, from the instruction to the end of its review. Used by the editor and the rehearsal script. */
+export async function sendInlineEdit(deps: InlineDeps, target: InlineTarget, fileText: string): Promise<void> {
+  const { controller, flow, port, log } = deps;
+  const mentions = await resolveMentions(port, parseMentions(target.instruction));
+  const prompt = buildInlinePrompt(target, readSelection(fileText, target), mentions);
+  const reviewsAtStart = flow.reviewsStarted;
+  await controller.send(prompt, {
+    agentName: INLINE_AGENT,
+    display: inlineDisplayText(target),
+    freshSession: true,
+    afterTurn: (output, signal) => finishInlineEdit({ flow, target, output, reviewsAtStart, signal, log }),
+  });
 }

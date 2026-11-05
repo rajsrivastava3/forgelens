@@ -266,7 +266,9 @@
     "start:trueforge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-trueforge.ps1",
     "spike": "tsx scripts/spike-p0.ts",
     "prepare": "git config core.hooksPath .githooks",
-    "test:e2e": "node test/e2e/launch.mjs"
+    "test:e2e": "node test/e2e/launch.mjs",
+    "rehearse:a": "tsx scripts/rehearse-a.ts",
+    "rehearse:b": "tsx scripts/rehearse-b.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import agentDefinition from '../../agents/forgelens-agent.json';
 import inlineDefinition from '../../agents/forgelens-inline.json';
 import { APPLY_TOOL, ReviewFlow, type UndoResult } from '../core/changeset/reviewFlow';
-import { buildAgentPrompt } from '../core/context/agentPrompt';
+import { sendAgentRequest } from '../core/context/agentPrompt';
 import { ContextEngine, type IndexStore } from '../core/context/engine';
 import { DEFAULT_BUDGET_TOKENS } from '../core/context/packer';
 import { startEditorMcpServer, type RunningEditorMcpServer } from '../core/mcp/server';
@@ -200,25 +200,21 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const inline = new InlineEdit({ controller, flow, port, log: (message) => output.appendLine(message) });
 
-  /** A request from the panel: the Context Pack goes first, and the panel shows only what was typed. */
   const sendToAgent = (text: string): Promise<void> =>
-    controller.send(text, {
-      prepare: async (message) => {
-        try {
-          const openFiles = vscode.window.visibleTextEditors.flatMap((editor) => relativeOf(editor.document.uri) ?? []);
-          const active = vscode.window.activeTextEditor;
-          return await buildAgentPrompt(engine, message, {
-            budgetTokens: config().get<number>('context.budgetTokens', DEFAULT_BUDGET_TOKENS),
-            activeFile: active ? relativeOf(active.document.uri) : undefined,
-            openFiles,
-          });
-        } catch (error) {
-          // The agent can still search for itself, so a failed pack should not stop the request.
-          output.appendLine(`Context Pack failed: ${String(error)}`);
-          return { prompt: message };
-        }
+    sendAgentRequest(
+      controller,
+      engine,
+      text,
+      () => {
+        const active = vscode.window.activeTextEditor;
+        return {
+          budgetTokens: config().get<number>('context.budgetTokens', DEFAULT_BUDGET_TOKENS),
+          activeFile: active ? relativeOf(active.document.uri) : undefined,
+          openFiles: vscode.window.visibleTextEditors.flatMap((editor) => relativeOf(editor.document.uri) ?? []),
+        };
       },
-    });
+      (message) => output.appendLine(message),
+    );
 
   const undo = async (): Promise<UndoResult> => {
     const result = await flow.undoLast();
