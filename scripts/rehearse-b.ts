@@ -40,8 +40,9 @@ interface Checks {
 
 async function verify(clone: string, workDir: string, tools: readonly ToolRecord[], threads: readonly string[]): Promise<Checks> {
   const failures: string[] = [];
-  const status = (await exec('git', ['-C', clone, 'status', '--porcelain', '-uall'])).stdout.trim();
-  const changedFiles = status ? status.split('\n').map((line) => line.slice(3).trim()) : [];
+  // Not trimmed first: the leading space belongs to the first line's status column.
+  const status = (await exec('git', ['-C', clone, 'status', '--porcelain', '-uall'])).stdout;
+  const changedFiles = status.split('\n').filter((line) => line.trim()).map((line) => line.slice(3).trim());
   if (changedFiles.length < 3) failures.push(`only ${changedFiles.length} files changed: ${changedFiles.join(', ') || 'none'}`);
 
   let pytest: string;
