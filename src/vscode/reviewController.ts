@@ -6,6 +6,7 @@ import type { HunkDecision, ReviewFlow } from '../core/changeset/reviewFlow';
 
 export const PROPOSED_SCHEME = 'forgelens-proposed';
 const EMPTY_QUERY = 'empty';
+const SAVED_DIFF_LAYOUT = 'forgelens.savedDiffLayout';
 
 const DECISION_ICON: Record<HunkDecision, vscode.ThemeIcon> = {
   accepted: new vscode.ThemeIcon('check', new vscode.ThemeColor('testing.iconPassed')),
@@ -47,7 +48,10 @@ export class ReviewController
   constructor(
     private readonly flow: ReviewFlow,
     private readonly workspaceRoot: () => string,
+    private readonly state: vscode.Memento,
   ) {
+    // Puts the setting back if the window closed during a review.
+    void this.restoreDiffLayout();
     this.tree = vscode.window.createTreeView('forgelens.changes', { treeDataProvider: this, showCollapseAll: false });
     this.disposables.push(
       this.tree,
@@ -184,7 +188,27 @@ export class ReviewController
     await vscode.commands.executeCommand('vscode.diff', left, right, `${path.posix.basename(change.path)} (${label})`, options);
   }
 
+  /**
+   * Long lines run off the side in a split diff on a small screen, and VS Code has no per-tab option. So a review
+   * switches the diff layout to inline while it is open, remembers the user's value, and puts it back afterwards.
+   */
+  private async useInlineDiff(): Promise<void> {
+    if (!vscode.workspace.getConfiguration('forgelens').get<boolean>('review.inlineDiff', true)) return;
+    const diff = vscode.workspace.getConfiguration('diffEditor');
+    if (diff.get<boolean>('renderSideBySide') === false || this.state.get(SAVED_DIFF_LAYOUT)) return;
+    await this.state.update(SAVED_DIFF_LAYOUT, { value: diff.inspect<boolean>('renderSideBySide')?.globalValue ?? null });
+    await diff.update('renderSideBySide', false, vscode.ConfigurationTarget.Global);
+  }
+
+  private async restoreDiffLayout(): Promise<void> {
+    const saved = this.state.get<{ value: boolean | null }>(SAVED_DIFF_LAYOUT);
+    if (!saved) return;
+    await vscode.workspace.getConfiguration('diffEditor').update('renderSideBySide', saved.value ?? undefined, vscode.ConfigurationTarget.Global);
+    await this.state.update(SAVED_DIFF_LAYOUT, undefined);
+  }
+
   private async openAll(): Promise<void> {
+    await this.useInlineDiff();
     // The first file opens last, so it is the one showing.
     const files = this.flow.changeset.files;
     for (const change of [...files.slice(1), ...files.slice(0, 1)]) {
@@ -205,5 +229,6 @@ export class ReviewController
       .flatMap((group) => group.tabs)
       .filter((tab) => tab.input instanceof vscode.TabInputTextDiff && (tab.input.modified.scheme === PROPOSED_SCHEME || tab.input.original.scheme === PROPOSED_SCHEME));
     if (tabs.length > 0) await vscode.window.tabGroups.close(tabs);
+    await this.restoreDiffLayout();
   }
 }

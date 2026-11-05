@@ -145,6 +145,30 @@
           "type": "boolean",
           "default": false,
           "description": "Use larger text in the agent panel, for recording."
+        },
+        "forgelens.context.budgetTokens": {
+          "type": "number",
+          "default": 12000,
+          "minimum": 1000,
+          "description": "How many tokens of code ForgeLens adds to each agent request as the Context Pack."
+        },
+        "forgelens.review.inlineDiff": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show review diffs inline rather than side by side, so long lines stay readable on a small screen. Your own layout setting comes back when the review closes."
+        },
+        "forgelens.commands.autoApprove": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "pytest",
+            "python -m pytest",
+            "git status",
+            "git diff"
+          ],
+          "description": "Commands the agent may run without asking, each still going through the TrueForge approval. A command with shell syntax such as ; or | always asks."
         }
       }
     },
@@ -230,7 +254,8 @@
       ]
     },
     "configurationDefaults": {
-      "diffEditor.codeLens": true
+      "diffEditor.codeLens": true,
+      "diffEditor.wordWrap": "on"
     }
   },
   "scripts": {
