@@ -170,22 +170,23 @@ export class AgentController {
         this.options.discardStaged?.();
         const { error } = result;
         const action = failureAction(error);
+        // Names without their provider keep notices on one or two lines; the role says which model it was.
+        const short = (name: string): string => name.split('/').pop() ?? name;
+        const who = index === 0 ? 'Primary model' : `Fallback model ${short(model)}`;
         if (action === 'stop') {
           this.builder.fail(error.message);
           return;
         }
         if (action === 'retry' && attempt < delays.length) {
           const wait = Math.round((delays[attempt] ?? 1_000) * (0.8 + Math.random() * 0.4));
-          this.builder.retrying(`${model}: ${shortReason(error)}. Trying again in ${Math.max(1, Math.round(wait / 1000))} s…`);
+          this.builder.retrying(`${who}: ${shortReason(error)}. Trying again in ${Math.max(1, Math.round(wait / 1000))} s…`);
           this.options.onChange();
           await this.pause(wait);
           continue;
         }
         const next = chain[index + 1];
         if (next) {
-          const who = index === 0 ? 'Primary model' : `Fallback model ${model}`;
-          // The model's own name, without its provider, keeps the banner on one or two lines.
-          this.builder.fallback(`${who} failed: ${shortReason(error)}. Switched to ${next.split('/').pop() ?? next} automatically.`);
+          this.builder.fallback(`${who} failed: ${shortReason(error)}. Switched to ${short(next)} automatically.`);
           this.options.onChange();
           break;
         }

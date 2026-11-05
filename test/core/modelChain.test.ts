@@ -168,6 +168,7 @@ describe('ModelChain in the controller', () => {
     expect(waits[1]).toBeGreaterThanOrEqual(2_400);
     expect(waits[1]).toBeLessThanOrEqual(3_600);
     expect(notices(controller).map((notice) => notice.tone)).toEqual(['info', 'info', 'warning']);
+    expect(notices(controller)[0]?.text).toMatch(/^Primary model: quota exceeded \(429\)\. Trying again in \d s/);
     expect(controller.view.status).toBe('done');
   });
 
