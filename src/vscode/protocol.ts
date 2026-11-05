@@ -13,7 +13,9 @@ export type ToWebview =
   /** Test hook: presses a real button and reports how quickly the page reacted. */
   | { type: 'probe-click'; selector: string }
   /** Test hook: sends the page the key press a person would make. */
-  | { type: 'probe-ctrl-z' };
+  | { type: 'probe-ctrl-z' }
+  /** The picked mention, to put where the user typed @. */
+  | { type: 'insert-mention'; mention: string };
 
 export type ToExtension =
   | { type: 'ready' }
@@ -26,4 +28,5 @@ export type ToExtension =
   | { type: 'review-open' }
   | { type: 'review-apply' }
   | { type: 'undo' }
+  | { type: 'pick-mention' }
   | { type: 'probe-result'; clicked: boolean; reactionMs: number; statusText: string };

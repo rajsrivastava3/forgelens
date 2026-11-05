@@ -166,3 +166,35 @@ describe('AgentController per-request options', () => {
     expect(instance.view.status).toBe('error');
   });
 });
+
+describe('AgentController prepare', () => {
+  const card = { files: 1, usedTokens: 10, budgetTokens: 100, items: [], dropped: [], notFound: [] };
+
+  it('sends the prepared prompt, shows what was typed, and adds the card', async () => {
+    const { turns } = loadRecording('subagent-read');
+    const sessions = replaySessions(turns);
+    const { instance } = controller(sessions);
+    await instance.send('short request', { prepare: (message) => Promise.resolve({ prompt: `PACK\n${message}`, card }) });
+    expect(sessions.inputs[0]?.[0]).toMatchObject({ content: 'PACK\nshort request' });
+    expect(instance.view.items[0]).toMatchObject({ kind: 'user', text: 'short request' });
+    expect(instance.view.items[1]).toMatchObject({ kind: 'context', files: 1, usedTokens: 10 });
+  });
+
+  it('honours a Stop pressed while the pack is being built', async () => {
+    const sessions = replaySessions([]);
+    const { instance } = controller(sessions);
+    let release: () => void = () => undefined;
+    const sending = instance.send('go', {
+      prepare: () =>
+        new Promise((resolve) => {
+          release = () => resolve({ prompt: 'x' });
+        }),
+    });
+    await vi.waitFor(() => expect(instance.view.sessionUrl).toBeDefined());
+    await instance.stop();
+    release();
+    await sending;
+    expect(instance.view.status).toBe('cancelled');
+    expect(sessions.inputs).toHaveLength(0);
+  });
+});

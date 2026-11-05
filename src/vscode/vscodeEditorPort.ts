@@ -83,6 +83,15 @@ export class VscodeEditorPort implements WritablePort {
     return this.readUri(this.uriOf(relativePath));
   }
 
+  async statFile(relativePath: string): Promise<{ mtimeMs: number; size: number } | undefined> {
+    try {
+      const { mtime, size } = await vscode.workspace.fs.stat(this.uriOf(relativePath));
+      return { mtimeMs: mtime, size };
+    } catch {
+      return undefined;
+    }
+  }
+
   hasUnsavedChanges(relativePath: string): boolean {
     const absolute = resolveInsideWorkspace(this.workspaceRoot, relativePath);
     return this.openDocument(absolute)?.isDirty ?? false;

@@ -1,15 +1,22 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import * as path from 'node:path';
 import { TrueForge } from '@truefoundry/trueforge-sdk';
 import * as vscode from 'vscode';
 import agentDefinition from '../../agents/forgelens-agent.json';
 import inlineDefinition from '../../agents/forgelens-inline.json';
 import { APPLY_TOOL, ReviewFlow, type UndoResult } from '../core/changeset/reviewFlow';
+import { buildAgentPrompt } from '../core/context/agentPrompt';
+import { ContextEngine, type IndexStore } from '../core/context/engine';
+import { DEFAULT_BUDGET_TOKENS } from '../core/context/packer';
 import { startEditorMcpServer, type RunningEditorMcpServer } from '../core/mcp/server';
+import { CommandRunner, DEFAULT_SAFE_COMMANDS, isSafeCommand, RUN_COMMAND_TOOL } from '../core/tools/runCommand';
 import { AgentController } from '../core/trueforge/agentController';
 import { setUpTrueForge, type AgentDefinition } from '../core/trueforge/setup';
 import type { SessionsApi } from '../core/trueforge/turnRunner';
 import { AgentPanel } from './agentPanel';
 import { InlineEdit } from './inlineEdit';
+import { pickMention } from './mentionPicker';
 import type { PanelState } from './protocol';
 import { ReviewController } from './reviewController';
 import { VscodeEditorPort } from './vscodeEditorPort';
@@ -25,6 +32,8 @@ interface TestSessions {
 }
 
 const EDITOR_UNDO_SETTLE_MS = 150;
+const FILE_LIST_SETTLE_MS = 500;
+const NOT_WORKSPACE_FILES = /(^|\/)(\.git|\.venv|venv|node_modules|__pycache__|\.pytest_cache)(\/|$)/;
 let stopOnClose: (() => Promise<void>) | undefined;
 
 function config(): vscode.WorkspaceConfiguration {
@@ -56,7 +65,21 @@ export function activate(context: vscode.ExtensionContext): void {
     onCard: (card) => controller.updateReview(card),
     onWarning: (message) => void vscode.window.showWarningMessage(message),
   });
-  const review = new ReviewController(flow, () => port.workspaceRoot);
+  const review = new ReviewController(flow, () => port.workspaceRoot, context.globalState);
+  const workspaceId = (): string => createHash('sha1').update(port.workspaceRoot.toLowerCase()).digest('hex').slice(0, 16);
+  const storageDir = context.globalStorageUri.fsPath;
+  // The index and the staged copy live here, never in the workspace, which must stay clean.
+  const indexStore: IndexStore = {
+    read: () => readFile(path.join(storageDir, `index-${workspaceId()}.json`), 'utf8').catch(() => undefined),
+    write: async (text) => {
+      await mkdir(storageDir, { recursive: true });
+      await writeFile(path.join(storageDir, `index-${workspaceId()}.json`), text);
+    },
+  };
+  const engine = new ContextEngine(port, { store: indexStore, log: (message) => output.appendLine(message) });
+  const runner = new CommandRunner();
+  const relativeOf = (uri: vscode.Uri): string | undefined =>
+    uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(uri) ? vscode.workspace.asRelativePath(uri, false).replace(/\\/g, '/') : undefined;
   let mcp: RunningEditorMcpServer | undefined;
   let mcpToken: string | undefined;
   let banner: string | undefined;
@@ -66,6 +89,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let testSessions: TestSessions | undefined;
   let wasBusy = false;
   let editorUndoTimer: ReturnType<typeof setTimeout> | undefined;
+  let fileListTimer: ReturnType<typeof setTimeout> | undefined;
 
   const sdk = (): TrueForge => {
     if (!client || clientUrl !== baseUrl()) {
@@ -94,6 +118,9 @@ export function activate(context: vscode.ExtensionContext): void {
       mcp = await startEditorMcpServer({
         port,
         flow,
+        context: engine,
+        runner,
+        ...(vscode.workspace.workspaceFolders?.[0] ? { shadowRoot: path.join(storageDir, 'shadow', workspaceId()) } : {}),
         token: mcpToken,
         listenPort,
         onToolCall: (record) => output.appendLine(`[tool] ${record.tool} ok=${String(record.ok)} ${JSON.stringify(record.args)}`),
@@ -156,7 +183,14 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     // By the resolved target, not the raw name: the model may reach it through call_tool.
     reviewApproval: (approval, signal) => (approval.call.name === APPLY_TOOL ? flow.requestReview(signal) : undefined),
-    discardStaged: () => flow.discard(),
+    autoApprove: (approval) =>
+      approval.call.name === RUN_COMMAND_TOOL &&
+      isSafeCommand(String(approval.call.args['command'] ?? ''), config().get<string[]>('commands.autoApprove', [...DEFAULT_SAFE_COMMANDS])),
+    // Stop also ends any test run still going: TrueForge waits for running tools before it can cancel.
+    discardStaged: () => {
+      flow.discard();
+      runner.cancelAll();
+    },
     onEvent: (event) => {
       if (event.type !== 'model.message.delta') {
         output.appendLine(`[event] ${event.type}${'threadId' in event && event.threadId ? ` thread=${event.threadId}` : ''}`);
@@ -165,6 +199,26 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const inline = new InlineEdit({ controller, flow, port, log: (message) => output.appendLine(message) });
+
+  /** A request from the panel: the Context Pack goes first, and the panel shows only what was typed. */
+  const sendToAgent = (text: string): Promise<void> =>
+    controller.send(text, {
+      prepare: async (message) => {
+        try {
+          const openFiles = vscode.window.visibleTextEditors.flatMap((editor) => relativeOf(editor.document.uri) ?? []);
+          const active = vscode.window.activeTextEditor;
+          return await buildAgentPrompt(engine, message, {
+            budgetTokens: config().get<number>('context.budgetTokens', DEFAULT_BUDGET_TOKENS),
+            activeFile: active ? relativeOf(active.document.uri) : undefined,
+            openFiles,
+          });
+        } catch (error) {
+          // The agent can still search for itself, so a failed pack should not stop the request.
+          output.appendLine(`Context Pack failed: ${String(error)}`);
+          return { prompt: message };
+        }
+      },
+    });
 
   const undo = async (): Promise<UndoResult> => {
     const result = await flow.undoLast();
@@ -182,7 +236,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const panel = new AgentPanel(context.extensionUri, {
     getState,
-    onSend: (text) => void controller.send(text),
+    onSend: (text) => void sendToAgent(text),
     onStop: () => void controller.stop(),
     onDecide: (toolCallId, allow) => controller.decide(toolCallId, allow),
     onNewChat: () => controller.newChat(),
@@ -194,7 +248,20 @@ export function activate(context: vscode.ExtensionContext): void {
     onReviewOpen: () => void vscode.commands.executeCommand('forgelens.review.open'),
     onReviewApply: () => void vscode.commands.executeCommand('forgelens.review.apply'),
     onUndo: () => void undo(),
+    onPickMention: () => {
+      void pickMention(port).then((mention) => {
+        if (mention) panel.insertMention(mention);
+      });
+    },
   });
+
+  const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*');
+  const fileListChanged = (uri: vscode.Uri): void => {
+    const relative = relativeOf(uri);
+    if (!relative || NOT_WORKSPACE_FILES.test(relative)) return;
+    clearTimeout(fileListTimer);
+    fileListTimer = setTimeout(() => void engine.syncFileList().catch(() => undefined), FILE_LIST_SETTLE_MS);
+  };
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(AgentPanel.viewId, panel, {
@@ -203,6 +270,19 @@ export function activate(context: vscode.ExtensionContext): void {
     panel,
     review,
     inline,
+    fileWatcher,
+    fileWatcher.onDidCreate(fileListChanged),
+    fileWatcher.onDidDelete(fileListChanged),
+    // Changed outside the editor, for example by git.
+    fileWatcher.onDidChange((uri) => {
+      const relative = relativeOf(uri);
+      if (relative && engine.index.files.has(relative)) void engine.noteFileChanged(relative).catch(() => undefined);
+    }),
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      const relative = relativeOf(document.uri);
+      if (relative && !NOT_WORKSPACE_FILES.test(relative)) void engine.noteFileChanged(relative).catch(() => undefined);
+    }),
+    new vscode.Disposable(() => engine.dispose()),
     vscode.commands.registerCommand('forgelens.editSelection', () => inline.run()),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.reason !== vscode.TextDocumentChangeReason.Undo || event.document.uri.scheme !== 'file') return;
@@ -227,7 +307,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('forgelens.stop', () => void controller.stop()),
     vscode.commands.registerCommand('forgelens.newChat', () => controller.newChat()),
     // Used by the end-to-end test, and by anything else that wants to drive the panel.
-    vscode.commands.registerCommand('forgelens.ask', (text: string) => controller.send(text)),
+    vscode.commands.registerCommand('forgelens.ask', (text: string) => sendToAgent(text)),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('forgelens.panel')) panel.refresh();
       if (event.affectsConfiguration('forgelens.models') || event.affectsConfiguration('forgelens.trueforgeUrl')) {
@@ -264,6 +344,9 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   stopOnClose = () => controller.stop();
+
+  // In the background and in slices, so the editor stays free. The first request waits for it if it must.
+  void engine.ensureBuilt().catch((error: unknown) => output.appendLine(`Indexing did not run: ${String(error)}`));
 
   showStatus();
   // Failure here is normal when TrueForge is not started yet: the banner says what to do.

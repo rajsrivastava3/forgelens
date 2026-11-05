@@ -1,4 +1,4 @@
-import type { ReviewItem, RunStatus, ThreadItem, ToolItem, ViewItem } from '../../core/trueforge/runView';
+import type { ContextItem, ReviewItem, RunStatus, ThreadItem, ToolItem, ViewItem } from '../../core/trueforge/runView';
 import type { PanelState, ToExtension, ToWebview } from '../protocol';
 import { renderMarkdown } from './markdown';
 
@@ -94,9 +94,12 @@ function renderTool(): Rendered {
   const via = element('span', 'tool-via');
   via.textContent = 'via call_tool';
   via.title = 'The model reached this tool through the call_tool meta tool (deferred tool loading).';
+  const safe = element('span', 'tool-via tool-auto');
+  safe.textContent = 'auto-approved (safe list)';
+  safe.title = 'On the safe list, so ForgeLens answered the TrueForge approval without asking.';
   const status = element('span', 'tool-status');
   const duration = element('span', 'tool-duration');
-  summary.append(icon, name, args, via, status, duration);
+  summary.append(icon, name, args, via, safe, status, duration);
   const approval = element('div', 'approval');
   const approvalText = element('div', 'approval-text');
   const allow = element('button', 'primary');
@@ -127,6 +130,7 @@ function renderTool(): Rendered {
       args.textContent = item.argsSummary;
       args.title = item.argsSummary;
       via.hidden = !item.viaCallTool;
+      safe.hidden = !item.autoApproved;
       status.textContent = STATUS_LABEL[item.status];
       duration.textContent = formatDuration(item.durationMs);
       // apply_changes is answered in the hunk review, not with a plain Allow or Deny.
@@ -189,6 +193,69 @@ function renderReview(): Rendered {
   };
 }
 
+function shortTokens(tokens: number): string {
+  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k` : String(tokens);
+}
+
+const PACK_MODE_LABEL: Record<ContextItem['items'][number]['mode'], string> = {
+  full: 'full text',
+  skeleton: 'signatures',
+  listed: 'path only',
+};
+
+/** Which files the agent was given and why. Starts open: this is the context engine at work, so it should show. */
+function renderContext(): Rendered {
+  const node = element('details', 'context-card');
+  node.open = true;
+  const summary = element('summary', 'context-summary');
+  const list = element('div', 'context-items');
+  node.append(summary, list);
+  return {
+    node,
+    signature: '',
+    update: (item) => {
+      if (item.kind !== 'context') return;
+      summary.textContent = `Context chosen: ${item.files} files, ${shortTokens(item.usedTokens)} / ${shortTokens(item.budgetTokens)} tokens`;
+      list.replaceChildren(
+        ...item.items.map((entry) => {
+          const row = element('div', entry.mentioned ? 'context-row mentioned' : 'context-row');
+          const head = element('div', 'context-head');
+          const file = element('span', 'context-path');
+          file.textContent = entry.path;
+          const meta = element('span', 'context-meta');
+          meta.textContent = `${PACK_MODE_LABEL[entry.mode]}, ${shortTokens(entry.tokens)}`;
+          head.append(file, meta);
+          const why = element('div', 'context-why');
+          why.textContent = entry.reason;
+          row.append(head, why);
+          return row;
+        }),
+      );
+      if (item.dropped.length > 0) {
+        const left = element('div', 'context-left');
+        left.textContent = `Left out: ${item.dropped.map((entry) => `${entry.path} (${entry.why})`).join(', ')}`;
+        list.append(left);
+      }
+      if (item.notFound.length > 0) {
+        const missing = element('div', 'context-left');
+        missing.textContent = `Mentioned but not found: ${item.notFound.join(', ')}`;
+        list.append(missing);
+      }
+    },
+  };
+}
+
+function renderNotice(): Rendered {
+  const node = element('div', 'notice');
+  return {
+    node,
+    signature: '',
+    update: (item) => {
+      if (item.kind === 'notice') node.textContent = item.text;
+    },
+  };
+}
+
 function renderThread(): Rendered {
   const node = element('details', 'thread');
   node.open = true;
@@ -228,7 +295,11 @@ function renderItems(items: readonly ViewItem[], container: HTMLElement): void {
               ? renderTool()
               : item.kind === 'review'
                 ? renderReview()
-                : renderThread();
+                : item.kind === 'context'
+                  ? renderContext()
+                  : item.kind === 'notice'
+                    ? renderNotice()
+                    : renderThread();
       rendered.set(item.id, entry);
     }
     const signature = shallowSignature(item);
@@ -302,6 +373,7 @@ sessionLink.addEventListener('click', () => post({ type: 'open-session' }));
 banner.addEventListener('click', () => post({ type: 'setup' }));
 input.addEventListener('input', () => {
   sendButton.disabled = !input.value.trim();
+  if (/(^|\s)@$/.test(input.value.slice(0, input.selectionStart))) post({ type: 'pick-mention' });
   input.style.height = 'auto';
   input.style.height = `${input.scrollHeight}px`;
 });
@@ -330,6 +402,14 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
   const message = event.data;
   if (message.type === 'state') {
     render(message.state);
+  } else if (message.type === 'insert-mention') {
+    // Replaces the @ that opened the picker, wherever the cursor is.
+    const caret = input.selectionStart;
+    const before = input.value.slice(0, caret).replace(/@$/, '');
+    input.value = `${before}${message.mention} ${input.value.slice(caret)}`;
+    input.focus();
+    input.selectionStart = input.selectionEnd = before.length + message.mention.length + 1;
+    sendButton.disabled = false;
   } else if (message.type === 'probe-ctrl-z') {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
   } else if (message.type === 'probe-click') {

@@ -16,6 +16,7 @@ export interface AgentPanelHandlers {
   onReviewOpen(): void;
   onReviewApply(): void;
   onUndo(): void;
+  onPickMention(): void;
 }
 
 export interface ProbeResult {
@@ -73,6 +74,10 @@ export class AgentPanel implements vscode.WebviewViewProvider {
     });
   }
 
+  insertMention(mention: string): void {
+    this.post({ type: 'insert-mention', mention });
+  }
+
   /** Test hook. */
   pressCtrlZForTest(): void {
     this.post({ type: 'probe-ctrl-z' });
@@ -118,6 +123,9 @@ export class AgentPanel implements vscode.WebviewViewProvider {
       case 'undo':
         this.handlers.onUndo();
         break;
+      case 'pick-mention':
+        this.handlers.onPickMention();
+        break;
       case 'probe-result':
         this.probeWaiter?.(message);
         this.probeWaiter = undefined;
@@ -150,7 +158,7 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   <div id="status" role="status" hidden></div>
   <div id="error" role="alert" hidden></div>
   <div class="composer">
-    <textarea id="input" rows="2" placeholder="Ask ForgeLens about this repository…" aria-label="Message"></textarea>
+    <textarea id="input" rows="2" placeholder="Ask ForgeLens about this repository. Type @ to add a file or symbol." aria-label="Message"></textarea>
     <button class="primary" id="send" disabled>Send</button>
     <button class="primary" id="stop" hidden>Stop</button>
   </div>

@@ -1,5 +1,6 @@
 import type { TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import type { ReviewCard } from '../changeset/reviewFlow';
+import type { ContextCard } from '../context/agentPrompt';
 import { resolveToolCall, shortArgs } from './toolCalls';
 import { messageText, type TurnEvent, type TurnOutcome } from './turnRunner';
 
@@ -16,6 +17,8 @@ export interface ToolItem {
   args: Record<string, unknown>;
   system: boolean;
   viaCallTool: boolean;
+  /** Allowed by the safe list rather than a person. */
+  autoApproved?: boolean;
   status: ToolStatus;
   durationMs: number | undefined;
   result: string | undefined;
@@ -45,7 +48,19 @@ export interface ReviewItem extends ReviewCard {
   kind: 'review';
 }
 
-export type ViewItem = ToolItem | TextItem | UserItem | ThreadItem | ReviewItem;
+export interface ContextItem extends ContextCard {
+  kind: 'context';
+  id: string;
+}
+
+/** Something the harness did on its own, shown so it does not look like a stall. */
+export interface NoticeItem {
+  kind: 'notice';
+  id: string;
+  text: string;
+}
+
+export type ViewItem = ToolItem | TextItem | UserItem | ThreadItem | ReviewItem | ContextItem | NoticeItem;
 
 export interface RunView {
   status: RunStatus;
@@ -133,6 +148,16 @@ export class RunViewBuilder {
     this.setStatus('running', seconds >= 1 ? `${WAITING_TEXT} ${seconds} s` : WAITING_TEXT);
   }
 
+  /** Shows what the Context Pack holds, right under the request it belongs to. */
+  contextCard(card: ContextCard): void {
+    this.view.items.push({ kind: 'context', id: `context-${this.turnCounter}`, ...card });
+  }
+
+  toolAutoApproved(toolCallId: string): void {
+    const tool = this.toolById.get(toolCallId);
+    if (tool) tool.autoApproved = true;
+  }
+
   /** Adds or updates the card for a review. */
   review(card: ReviewCard): void {
     let item = this.reviewById.get(card.id);
@@ -179,6 +204,12 @@ export class RunViewBuilder {
       }
       case 'tool.response':
         this.applyToolResponse(event);
+        break;
+      case 'thread.context_compaction_started':
+        this.notice(event.threadId, 'Compacting the conversation to free up context…');
+        break;
+      case 'thread.context_compaction_finished':
+        this.notice(event.threadId, 'Compacted the conversation to free up context.');
         break;
       case 'tool.approval_required':
         for (const ref of event.toolCalls) {
@@ -228,6 +259,13 @@ export class RunViewBuilder {
 
   private failureText(): string {
     return this.appliedText ? `Failed after this was applied: ${this.appliedText}` : 'Failed, workspace unchanged';
+  }
+
+  private notice(threadId: string, text: string): void {
+    const id = `compaction-${this.turnCounter}-${threadId}`;
+    const existing = this.view.items.find((item): item is NoticeItem => item.kind === 'notice' && item.id === id);
+    if (existing) existing.text = text;
+    else this.view.items.push({ kind: 'notice', id, text });
   }
 
   private isActive(): boolean {

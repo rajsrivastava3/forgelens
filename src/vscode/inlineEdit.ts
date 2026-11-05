@@ -2,15 +2,12 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { ReviewFlow } from '../core/changeset/reviewFlow';
 import { buildInlinePrompt, finishInlineEdit, inlineDisplayText, readSelection, type InlineTarget } from '../core/inline/inlineEdit';
-import { mentionCandidates, parseMentions, resolveMentions } from '../core/inline/mentions';
+import { parseMentions, resolveMentions } from '../core/inline/mentions';
 import type { EditorPort } from '../core/tools/editorPort';
 import type { AgentController } from '../core/trueforge/agentController';
+import { pickMention } from './mentionPicker';
 
 const INLINE_AGENT = 'forgelens-inline';
-
-interface MentionPick extends vscode.QuickPickItem {
-  mention: string;
-}
 
 export interface InlineEditOptions {
   controller: AgentController;
@@ -130,7 +127,7 @@ export class InlineEdit implements vscode.Disposable {
       box.onDidChangeValue((value) => {
         if (picking || !/(^|\s)@$/.test(value)) return;
         picking = true;
-        void this.pickMention().then((mention) => {
+        void pickMention(this.options.port).then((mention) => {
           picking = false;
           box.value = mention ? `${value.slice(0, -1)}${mention} ` : value;
           box.show();
@@ -138,19 +135,6 @@ export class InlineEdit implements vscode.Disposable {
       });
       box.show();
     });
-  }
-
-  private async pickMention(): Promise<string | undefined> {
-    const candidates = await mentionCandidates(this.options.port);
-    const items = candidates.map(
-      (candidate): MentionPick => ({
-        label: `${candidate.kind === 'file' ? '$(file)' : '$(symbol-method)'} ${candidate.name}`,
-        description: candidate.detail,
-        mention: `@${candidate.kind}:${candidate.name}`,
-      }),
-    );
-    const pick = await vscode.window.showQuickPick(items, { title: 'Add a file or symbol to the context', matchOnDescription: true });
-    return pick?.mention;
   }
 
   private showProgress(editor: vscode.TextEditor, startLine: number, lastLine: number): void {

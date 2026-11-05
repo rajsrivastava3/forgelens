@@ -1,4 +1,5 @@
 import type { ReviewCard } from '../changeset/reviewFlow';
+import type { ContextCard } from '../context/agentPrompt';
 import { AgentRun, STOPPED_DURING_APPROVAL, type ApprovalDecision } from './agentRun';
 import { describeTurnError, isConnectionFailure, trueForgeUnreachableMessage } from './errors';
 import { RunViewBuilder, type RunView } from './runView';
@@ -16,6 +17,8 @@ export interface AgentControllerOptions {
   onEvent?: (event: TurnEvent) => void;
   /** Takes over an approval, such as opening the hunk review for apply_changes. Undefined leaves it to decide(). */
   reviewApproval?: (approval: PendingApproval, signal: AbortSignal) => Promise<ApprovalDecision> | undefined;
+  /** True when an approval needs no person. It still goes through TrueForge as an allow. */
+  autoApprove?: (approval: PendingApproval) => boolean;
   /** A stop, a failure or a new chat: whatever is staged will never be reviewed, so drop it. */
   discardStaged?: () => void;
   now?: () => number;
@@ -30,6 +33,8 @@ export interface SendOptions {
   display?: string;
   /** Always start a new session, because this request stands alone. */
   freshSession?: boolean;
+  /** Builds what the agent receives from what the user typed, such as adding a Context Pack. */
+  prepare?: (message: string) => Promise<{ prompt: string; card?: ContextCard }>;
   /** Runs after a finished turn, while Stop still works. A returned message is shown as a failure. */
   afterTurn?: (output: string, signal: AbortSignal) => Promise<string | undefined>;
 }
@@ -113,6 +118,17 @@ export class AgentController {
         this.builder.applyOutcome({ status: 'cancelled', reason: 'client-cancelled' });
         return;
       }
+      let prompt = message;
+      if (sendOptions.prepare) {
+        const prepared = await sendOptions.prepare(message);
+        prompt = prepared.prompt;
+        if (prepared.card) this.builder.contextCard(prepared.card);
+        this.options.onChange();
+        if (this.stopRequested) {
+          this.builder.applyOutcome({ status: 'cancelled', reason: 'client-cancelled' });
+          return;
+        }
+      }
       this.run = new AgentRun({
         sessions: this.options.sessions(),
         sessionId: this.sessionId,
@@ -122,7 +138,7 @@ export class AgentController {
         onChange: this.options.onChange,
         ...(this.options.onEvent ? { onEvent: this.options.onEvent } : {}),
       });
-      const outcome = await this.run.send(message);
+      const outcome = await this.run.send(prompt);
       if (outcome.status === 'cancelled' || outcome.status === 'error') this.options.discardStaged?.();
       if (outcome.status === 'cancelled' && outcome.reason === STOPPED_DURING_APPROVAL) this.sessionId = undefined;
       if (outcome.status === 'done' && sendOptions.afterTurn && !this.stopRequested) {
@@ -179,6 +195,10 @@ export class AgentController {
   }
 
   private waitForDecision(approval: PendingApproval, signal: AbortSignal): Promise<ApprovalDecision> {
+    if (this.options.autoApprove?.(approval)) {
+      this.builder.toolAutoApproved(approval.toolCallId);
+      return Promise.resolve({ allow: true });
+    }
     const reviewed = this.options.reviewApproval?.(approval, signal);
     if (reviewed) return reviewed;
     return new Promise((resolve) => {
