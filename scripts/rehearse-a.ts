@@ -92,10 +92,10 @@ async function main(): Promise<void> {
   for (let run = 1; run <= runs; run += 1) {
     if (run > 1 && !scripted) await new Promise((resolve) => setTimeout(resolve, gapMs));
     while (modelIndex < models.length) {
-      checkSpend();
+      checkSpend(models.slice(modelIndex));
       resetClone(clone);
       const model = models[modelIndex] as string;
-      const harness = await startHarness(clone, model, scripted ? (call) => scriptedSessions(dryRunSteps(scripted), call) : undefined);
+      const harness = await startHarness(clone, models.slice(modelIndex), scripted ? (call) => scriptedSessions(dryRunSteps(scripted), call) : undefined);
       const started = Date.now();
       const fileText = readFileSync(path.join(clone, FILE), 'utf8');
       const lines = selectFunction(fileText);

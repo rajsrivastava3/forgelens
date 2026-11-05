@@ -16,7 +16,7 @@ import { NodeEditorPort } from '../../src/core/tools/nodeEditorPort';
 import { CommandRunner, DEFAULT_SAFE_COMMANDS, isSafeCommand, RUN_COMMAND_TOOL } from '../../src/core/tools/runCommand';
 import { AgentController } from '../../src/core/trueforge/agentController';
 import type { ViewItem } from '../../src/core/trueforge/runView';
-import { setUpTrueForge, type AgentDefinition } from '../../src/core/trueforge/setup';
+import { createSessionForModel, setUpTrueForge, type AgentDefinition } from '../../src/core/trueforge/setup';
 import type { SessionsApi } from '../../src/core/trueforge/turnRunner';
 
 export const exec = promisify(execFile);
@@ -71,10 +71,10 @@ export function addSpend(usd: number, label: string): number {
   return total;
 }
 
-/** Stops before a run that would start over the cap. */
-export function checkSpend(): void {
+/** Stops before a run that would start over the cap. A run on models with no price spends nothing, so it may go ahead. */
+export function checkSpend(models: readonly string[] = Object.keys(PRICES)): void {
   const spent = spentInr();
-  if (spent >= SPEND_CAP_INR) {
+  if (spent >= SPEND_CAP_INR && models.some((model) => PRICES[model] !== undefined)) {
     console.error(`Stopped: Rs ${spent.toFixed(2)} spent in this run, at or over the Rs ${SPEND_CAP_INR} cap.`);
     process.exit(5);
   }
@@ -136,6 +136,11 @@ export interface ToolRecord {
 
 export interface RunRecord {
   model: string;
+  /** Every model that was asked, in order, and the notices the chain showed. */
+  modelsTried: string[];
+  notices: string[];
+  /** Set when the cost guard stopped the run. */
+  stoppedForCost: boolean;
   status: string;
   error: string | undefined;
   sessionUrl: string | undefined;
@@ -179,8 +184,23 @@ function collectTools(items: readonly ViewItem[], thread = 'main'): ToolRecord[]
   });
 }
 
-/** Makes `sessionsOverride` the server, for a dry run with no model. */
-export async function startHarness(workspace: string, model: string, sessionsOverride?: (callTool: Harness['callTool']) => SessionsApi): Promise<Harness> {
+/** The most one run may cost before it is stopped mid-turn. The total cap is checked between runs as well. */
+const RUN_COST_GUARD_USD = Number(process.env['FORGELENS_RUN_GUARD_INR'] ?? 30) / INR_PER_USD;
+
+/** Makes `sessionsOverride` the server, for a dry run with no model. `models` is the chain, primary first. */
+export async function startHarness(
+  workspace: string,
+  modelOrChain: string | readonly string[],
+  sessionsOverride?: (callTool: Harness['callTool']) => SessionsApi,
+  hooks: { onFallback?: () => void } = {},
+): Promise<Harness> {
+  const chain = typeof modelOrChain === 'string' ? [modelOrChain] : [...modelOrChain];
+  const model = chain[0] as string;
+  const modelsTried: string[] = [];
+  let stoppedForCost = false;
+  let primary = model;
+  let liveCostUsd = 0;
+  let noticeCount = 0;
   const port = new NodeEditorPort(workspace);
   const logLines: string[] = [];
   const log = (message: string): void => {
@@ -229,17 +249,38 @@ export async function startHarness(workspace: string, model: string, sessionsOve
     agentName: 'forgelens-agent',
     baseUrl: () => BASE_URL,
     sessions: () => scripted ?? client.sessions,
-    createSession: async (agentName) => (scripted ? `scripted-${randomBytes(4).toString('hex')}` : (await client.sessions.create({ agent: { name: agentName } })).data.id),
+    createSession: async (agentName, sessionModel) => {
+      modelsTried.push(sessionModel);
+      if (scripted) return `scripted-${randomBytes(4).toString('hex')}`;
+      // As the extension does: the saved agent for the primary, the same manifest with the model swapped for the rest.
+      if (sessionModel === primary) return (await client.sessions.create({ agent: { name: agentName } })).data.id;
+      const definition = loadAgents().find((candidate) => candidate.name === agentName);
+      if (!definition) throw new Error(`No agent named ${agentName}.`);
+      return createSessionForModel(BASE_URL, definition, sessionModel);
+    },
     ensureReady: async () => {
-      if (scripted) return `scripted (${model})`;
-      const result = await setUpTrueForge({ baseUrl: BASE_URL, mcp: { url: mcp.url, token }, configuredModels: [model], agents: loadAgents() });
-      if (result.model !== model) throw new Error(`TrueForge has no model ${model}.`);
+      if (scripted) return model;
+      const result = await setUpTrueForge({ baseUrl: BASE_URL, mcp: { url: mcp.url, token }, configuredModels: chain, agents: loadAgents() });
+      primary = result.model;
       return result.model;
     },
-    onChange: () => undefined,
+    models: () => chain,
+    firstTokenMs: Number(process.env['FORGELENS_FIRST_TOKEN_S'] ?? 45) * 1000,
+    onChange: () => {
+      const count = controller.view.items.filter((item) => item.kind === 'notice' && item.tone === 'warning').length;
+      if (count > noticeCount) {
+        noticeCount = count;
+        hooks.onFallback?.();
+      }
+    },
     autoApprove: (approval) => approval.call.name === RUN_COMMAND_TOOL && isSafeCommand(String(approval.call.args['command'] ?? ''), DEFAULT_SAFE_COMMANDS),
     // The person in this script accepts every hunk at once. All else is what the extension does.
     reviewApproval: (approval, signal) => {
+      // No one is here to approve anything else, so it is declined with the reason, rather than waiting forever.
+      if (approval.call.name === RUN_COMMAND_TOOL) {
+        log(`[declined] run_command ${JSON.stringify(approval.call.args)}`);
+        return Promise.resolve({ allow: false, reason: 'Not on the safe list, and nobody can approve it in this headless rehearsal. Use run_command only to run tests, with target "staged".' });
+      }
       if (approval.call.name !== APPLY_TOOL) return undefined;
       const decision = flow.requestReview(signal);
       noteReview();
@@ -257,6 +298,15 @@ export async function startHarness(workspace: string, model: string, sessionsOve
       if (event.type === 'model.message' && !messageIds.has(event.id)) {
         messageIds.add(event.id);
         requests += 1;
+      }
+      // Each finished message reports its tokens, so a runaway turn is caught while it runs, not after.
+      if (event.type === 'model.message' && event.usage) {
+        liveCostUsd += estimateCostUsd(controller.activeModel ?? model, event.usage.inputTokens ?? 0, event.usage.outputTokens ?? 0, 0);
+        if (liveCostUsd > RUN_COST_GUARD_USD && !stoppedForCost) {
+          stoppedForCost = true;
+          log(`[cost guard] about Rs ${(liveCostUsd * INR_PER_USD).toFixed(2)} spent in this run, over the guard. Stopping.`);
+          void controller.stop();
+        }
       }
       if (event.type === 'turn.done') {
         const metrics = 'metrics' in event.state ? event.state.metrics : undefined;
@@ -289,7 +339,10 @@ export async function startHarness(workspace: string, model: string, sessionsOve
       const context = view.items.find((item) => item.kind === 'context');
       const threads = view.items.flatMap((item) => (item.kind === 'thread' ? [item.title] : []));
       return {
-        model,
+        model: controller.activeModel ?? model,
+        modelsTried,
+        notices: view.items.flatMap((item) => (item.kind === 'notice' ? [item.text] : [])),
+        stoppedForCost,
         status: view.status,
         error: view.error,
         sessionUrl: view.sessionUrl,
@@ -298,7 +351,7 @@ export async function startHarness(workspace: string, model: string, sessionsOve
         requests,
         tokensIn,
         tokensOut,
-        costUsd: costUsd || estimateCostUsd(model, tokensIn, tokensOut, reasoningTokens),
+        costUsd: costUsd || estimateCostUsd(controller.activeModel ?? model, tokensIn, tokensOut, reasoningTokens),
         threads,
         tools: collectTools(view.items),
         files,
