@@ -79,6 +79,27 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   }
 
   /** Test hook. */
+  readForTest(selector: string): Promise<ProbeResult> {
+    return new Promise((resolve) => {
+      this.probeWaiter = resolve;
+      this.post({ type: 'probe-read', selector });
+    });
+  }
+
+  /** Test hook. */
+  inViewForTest(selector: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.probeWaiter = (result) => resolve(result.clicked);
+      this.post({ type: 'probe-in-view', selector });
+    });
+  }
+
+  /** Test hook. */
+  typeForTest(text: string): void {
+    this.post({ type: 'probe-type', text });
+  }
+
+  /** Test hook. */
   pressCtrlZForTest(): void {
     this.post({ type: 'probe-ctrl-z' });
   }
@@ -158,7 +179,7 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   <div id="status" role="status" hidden></div>
   <div id="error" role="alert" hidden></div>
   <div class="composer">
-    <textarea id="input" rows="2" placeholder="Ask ForgeLens about this repository. Type @ to add a file or symbol." aria-label="Message"></textarea>
+    <textarea id="input" rows="2" placeholder="Ask, or describe a change. @ adds a file." aria-label="Message"></textarea>
     <button class="primary" id="send" disabled>Send</button>
     <button class="primary" id="stop" hidden>Stop</button>
   </div>

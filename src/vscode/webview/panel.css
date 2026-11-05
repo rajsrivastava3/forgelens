@@ -275,7 +275,7 @@ body.large-text {
 }
 
 .context-items {
-  max-height: 18rem;
+  max-height: 13rem;
   overflow-y: auto;
   padding: 0 0.6rem 0.4rem;
 }

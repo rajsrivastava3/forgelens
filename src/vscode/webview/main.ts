@@ -327,8 +327,13 @@ function render(next: PanelState): void {
 
   const { view } = next;
   if (view.items.length === 0) rendered.clear();
+  const knownContext = new Set(view.items.filter((item) => item.kind === 'context' && rendered.has(item.id)).map((item) => item.id));
   renderItems(view.items, transcript);
-  if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
+  // A new Context Pack card opens at its heading, which says what was chosen, not at the bottom of its list.
+  const newContext = view.items.find((item) => item.kind === 'context' && !knownContext.has(item.id));
+  const contextNode = newContext ? rendered.get(newContext.id)?.node : undefined;
+  if (contextNode) contextNode.scrollIntoView({ block: 'start' });
+  else if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
 
   if (!next.busy) stopPressed = false;
   statusLine.textContent = stopPressed ? 'Stopping…' : view.statusText;
@@ -410,6 +415,20 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
     input.focus();
     input.selectionStart = input.selectionEnd = before.length + message.mention.length + 1;
     sendButton.disabled = false;
+  } else if (message.type === 'probe-read') {
+    const target = document.querySelector<HTMLElement>(message.selector);
+    const rect = target?.getBoundingClientRect();
+    const visible = target !== null && target.checkVisibility() && (rect?.width ?? 0) > 0 && (rect?.height ?? 0) > 0;
+    post({ type: 'probe-result', clicked: visible, reactionMs: 0, statusText: target instanceof HTMLTextAreaElement ? target.value : (target?.textContent ?? '') });
+  } else if (message.type === 'probe-in-view') {
+    const rect = document.querySelector<HTMLElement>(message.selector)?.getBoundingClientRect();
+    const frame = transcript.getBoundingClientRect();
+    post({ type: 'probe-result', clicked: rect !== undefined && rect.top >= frame.top && rect.bottom <= frame.bottom, reactionMs: 0, statusText: '' });
+  } else if (message.type === 'probe-type') {
+    input.focus();
+    input.value = message.text;
+    input.selectionStart = input.selectionEnd = message.text.length;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
   } else if (message.type === 'probe-ctrl-z') {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
   } else if (message.type === 'probe-click') {

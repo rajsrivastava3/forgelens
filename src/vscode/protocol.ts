@@ -14,6 +14,12 @@ export type ToWebview =
   | { type: 'probe-click'; selector: string }
   /** Test hook: sends the page the key press a person would make. */
   | { type: 'probe-ctrl-z' }
+  /** Test hook: reports whether something is on screen, and its text. */
+  | { type: 'probe-read'; selector: string }
+  /** Test hook: reports whether something sits inside the visible part of the transcript. */
+  | { type: 'probe-in-view'; selector: string }
+  /** Test hook: types into the message box as a person would. */
+  | { type: 'probe-type'; text: string }
   /** The picked mention, to put where the user typed @. */
   | { type: 'insert-mention'; mention: string };
 

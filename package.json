@@ -41,7 +41,8 @@
         },
         {
           "id": "forgelens.changes",
-          "name": "Changes"
+          "name": "Changes",
+          "visibility": "collapsed"
         }
       ]
     },

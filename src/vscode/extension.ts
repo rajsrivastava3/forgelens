@@ -329,6 +329,9 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.commands.registerCommand('forgelens.internal.answerInput', (value: string) => inline.answerInputForTest(value)),
       vscode.commands.registerCommand('forgelens.internal.click', (selector: string) => panel.clickForTest(selector)),
       vscode.commands.registerCommand('forgelens.internal.pressCtrlZ', () => panel.pressCtrlZForTest()),
+      vscode.commands.registerCommand('forgelens.internal.read', (selector: string) => panel.readForTest(selector)),
+      vscode.commands.registerCommand('forgelens.internal.inView', (selector: string) => panel.inViewForTest(selector)),
+      vscode.commands.registerCommand('forgelens.internal.type', (text: string) => panel.typeForTest(text)),
       vscode.commands.registerCommand('forgelens.internal.mcp', () => ({ url: mcp?.url, token: mcpToken })),
       vscode.commands.registerCommand('forgelens.internal.hunks', () =>
         flow.changeset.hunks.map((hunk) => ({ id: hunk.id, path: hunk.path, newStart: hunk.newStart, lines: hunk.lines, decision: flow.decisionOf(hunk.id) })),
