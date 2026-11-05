@@ -85,6 +85,10 @@ model requests. For a real agent run, pass `live` or `task-a-live` as the scenar
 `node test/e2e/launch.mjs <workDir> task-a-live`. It downloads its own copy of VS Code, or set `VSCODE_EXE` to use
 another. It stops at the start if the system drive or the work folder's drive has under 2 GB free.
 
+## Rehearsing the tasks without a window
+
+`npm run rehearse:a` and `npm run rehearse:b` run the exact tasks on a throwaway clone of Flask, with no VS Code window, on the same code as the extension. The only stand-in is the person, who accepts every hunk. Each run then checks the result: the exact verification commands, the tests, and for Task B the new command against a small app. Pass `--models a/b,c/d` to try models in order, and `--scripted good` or `--scripted bad` for a dry run with no model, which proves the checks catch a wrong answer. Results go to `out/rehearse-*.json`. A run stops at the start if under 1 GB of RAM or 2 GB of disk is free.
+
 ## Start TrueForge locally
 
 ForgeLens hosts its MCP server on `127.0.0.1`, and TrueForge blocks loopback URLs by default, so

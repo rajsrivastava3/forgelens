@@ -116,6 +116,16 @@ On 4 November `gemini-flash-lite-latest` staged edits in two files and reached t
 in total including the scripted review, 8,340 tokens, no 429. It called `stage_edit` and `apply_changes`
 directly this time, not through `call_tool`. Session: `01m6hr3n5fa3m3kgwcedvcnj5t`.
 
+## Prepaid billing removes the free tier
+
+On 5 November the Gemini project showed tier "Paid 1" with a prepaid balance of zero. Every model on the key then failed the same way, free ones included, in about half a second and with no tokens used:
+
+```
+[Model Error] Request failed (402): Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.
+```
+
+Tested: gemini-3-8-flash, gemini-flash-lite-latest, gemini-3-1-flash-lite, gemini-3-5-flash-lite. So moving a project to prepaid ends its free rotation until credit arrives, and a fallback on the same key does not survive this. A second provider would.
+
 ## What this means
 
 - The extension cannot assume a named model is usable on a given day, so ModelChain needs to treat 429
