@@ -121,7 +121,7 @@ export function verifyEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv
   return { ...process.env, PATH: `${VENV_SCRIPTS}${path.delimiter}${process.env['PATH'] ?? ''}`, PYTHONPATH: 'src', PYTHONDONTWRITEBYTECODE: '1', ...extra };
 }
 
-function loadAgents(): AgentDefinition[] {
+export function loadAgents(): AgentDefinition[] {
   return ['forgelens-agent', 'forgelens-inline'].map((name) => JSON.parse(readFileSync(path.join(ROOT, 'agents', `${name}.json`), 'utf8')) as AgentDefinition);
 }
 
