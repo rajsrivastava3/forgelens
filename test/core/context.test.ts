@@ -410,13 +410,26 @@ describe.skipIf(!hasFlask)('on the real flask repo, read-only', () => {
     expect(top5).toEqual(expect.arrayContaining(['src/flask/cli.py', 'tests/test_cli.py', 'docs/cli.rst']));
   });
 
-  it('packs Task B within 12k tokens, with cli.py shown in full and a reason for every file', async () => {
-    const pack = await engine.pack(TASK_B, { budgetTokens: 12_000 });
-    expect(pack.usedTokens).toBeLessThanOrEqual(12_000);
+  it('packs Task B within the 6k default, with cli.py shown in full and a reason for every file', async () => {
+    const pack = await engine.pack(TASK_B);
+    expect(pack.budgetTokens).toBe(6_000);
+    expect(pack.usedTokens).toBeLessThanOrEqual(6_000);
     expect(pack.items.find((item) => item.path === 'src/flask/cli.py')?.mode).toBe('full');
     for (const expected of ['tests/test_cli.py', 'docs/cli.rst']) expect(pack.items.map((item) => item.path)).toContain(expected);
     for (const item of pack.items) expect(item.reason.length).toBeGreaterThan(5);
     expect(formatPack(pack)).toContain('routes_command');
+  });
+
+  it('brings the place that registers the shown command into the Task B pack', async () => {
+    const text = formatPack(await engine.pack(TASK_B));
+    expect(text).toMatch(/\d+: +self\.add_command\(routes_command\)/);
+  });
+
+  it('keeps docs held only by a side hit off the card for a question about get_debug_flag', async () => {
+    const paths = (await engine.retrieve('where is get_debug_flag defined')).map((item) => item.path);
+    expect(paths[0]).toBe('src/flask/helpers.py');
+    expect(paths).toContain('tests/test_helpers.py');
+    expect(paths).not.toContain('docs/cli.rst');
   });
 
   it('finds helpers.py first for the Task A question', async () => {
@@ -507,5 +520,34 @@ describe('reason text', () => {
     expect(items.get('tests/test_cli.py')).not.toContain('test_command_list_works');
     expect(items.get('docs/cli.rst')).toContain('documents src/pkg/cli.py');
     expect(items.get('docs/cli.rst')).not.toContain('mentions');
+  });
+});
+
+describe('weak links', () => {
+  it('drops a doc held only by a weak mention, and keeps one with a strong link or its own match', async () => {
+    const index = await indexOf({
+      'src/pkg/helpers.py': 'def get_debug_flag():\n    return debug_flag_value\n',
+      'src/pkg/app.py': 'from .helpers import get_debug_flag\n\ndef register_blueprint_here():\n    return get_debug_flag()\n',
+      'docs/cli.rst': 'Command Line\n============\n\nUse register_blueprint_here to add commands.\n',
+      'docs/helpers.rst': 'Helpers\n=======\n\nget_debug_flag reads the flag.\n',
+      'docs/debugging.rst': 'Debugging\n=========\n\nThe debug flag turns on the debugger. Debug mode shows a flag.\n',
+    });
+    const paths = retrieve(index, 'where is the debug flag defined').map((item) => item.path);
+    expect(paths).toContain('src/pkg/helpers.py');
+    expect(paths).toContain('docs/helpers.rst');
+    expect(paths).toContain('docs/debugging.rst');
+    expect(paths).not.toContain('docs/cli.rst');
+  });
+});
+
+describe('pack defaults', () => {
+  it('uses 6k tokens by default and keeps the outline short', async () => {
+    const big = Array.from({ length: 40 }, (_, i) => `def helper_${i}():\n    return shared_word\n\n`).join('');
+    const index = await indexOf({ 'src/many.py': big });
+    const pack = await buildPack(index, retrieve(index, 'shared word'), () => Promise.resolve(big));
+    expect(pack.budgetTokens).toBe(6000);
+    const content = pack.items[0]?.content ?? '';
+    expect(content).toMatch(/\[\d+ more definitions\]/);
+    expect(content.split('\n').filter((line) => /^\d+: def helper_/.test(line)).length).toBeLessThan(25);
   });
 });

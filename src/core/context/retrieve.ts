@@ -30,12 +30,22 @@ const NAME_MATCH_BOOST = 1.6;
 const SYMBOL_MATCH_BOOST = 1.2;
 const CHANGE_WORDS = /\b(add|adds|adding|new|fix|fixes|change|changes|remove|removes|rename|renames|deprecate|support|implement)\b/i;
 const DATA_FILE_WEIGHT = 0.35;
+/**
+ * Below this share of the best file's own score, a file stays only with a strong link: one from the two best hits, the
+ * changelog, an open editor or a mention. A doc paired with a side hit, or one that only names a symbol, does not.
+ */
+const WEAK_LINK_FLOOR = 0.25;
+const PRIMARY_SEEDS = 2;
 const MAX_NAMES = 3;
 const MAX_MATCHES = 3;
 
 interface Candidate {
   path: string;
   score: number;
+  /** The file's own word-match score, before anything it is linked to adds. */
+  direct: number;
+  /** A strong link: a test or doc pairing, an import, the changelog, an open editor. */
+  strong: boolean;
   chunks: number[];
   matched: Set<string>;
   names: string[];
@@ -90,11 +100,12 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
   const queryText = options.selection ? `${query}\n${options.selection}` : query;
   const terms = uniqueTokens(queryText);
   const queryWords = new Set(tokenize(query));
+  const termSet = new Set(terms);
   const candidates = new Map<string, Candidate>();
   const candidate = (path: string): Candidate => {
     let entry = candidates.get(path);
     if (!entry) {
-      entry = { path, score: 0, chunks: [], matched: new Set(), names: [], relations: [], mentioned: false };
+      entry = { path, score: 0, direct: 0, strong: false, chunks: [], matched: new Set(), names: [], relations: [], mentioned: false };
       candidates.set(path, entry);
     }
     return entry;
@@ -104,6 +115,7 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
     const file = index.files.get(path);
     const entry = candidate(path);
     entry.score = fileScore(chunks, terms.length);
+    entry.direct = entry.score;
     if (isDataFile(path)) entry.score *= DATA_FILE_WEIGHT;
     entry.chunks = chunks.slice(0, 6).map((chunk) => chunk.chunk);
     for (const chunk of chunks.slice(0, 3)) {
@@ -120,11 +132,14 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
   const top = (): Candidate[] => [...candidates.values()].sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   const seeds = top().slice(0, SEEDS);
   const bestScore = seeds[0]?.score ?? 1;
+  // Links from the best hits are strong; links from side hits only add to the score.
+  const primary = new Set(seeds.slice(0, PRIMARY_SEEDS));
   const paths = index.paths;
 
   for (const seed of seeds) {
     for (const pair of pairedFiles(seed.path, paths)) {
       const entry = candidate(pair.path);
+      if (primary.has(seed)) entry.strong = true;
       const weight = pair.relation === 'test' ? 0.8 : pair.relation === 'doc' ? 0.7 : 0.6;
       entry.score += seed.score * weight;
       entry.relations.push(
@@ -145,6 +160,9 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
         if (mentionsModule || mentionsSymbol) {
           const entry = candidate(path);
           entry.score += seed.score * 0.15;
+          // Strong only when a best hit's symbol that the request itself names is mentioned; register_blueprint in
+          // a doc says nothing about a question on get_debug_flag.
+          if (primary.has(seed) && mentionsSymbol && tokenize(mentionsSymbol).some((word) => termSet.has(word))) entry.strong = true;
           if (entry.relations.length < 2) entry.relations.push(`mentions ${mentionsSymbol ?? stem} from ${seed.path}`);
         }
       }
@@ -154,11 +172,13 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
   for (const seed of seeds.slice(0, IMPORT_SEEDS)) {
     for (const target of index.imports.get(seed.path) ?? []) {
       const entry = candidate(target);
+      if (primary.has(seed)) entry.strong = true;
       entry.score += seed.score * 0.12;
       if (entry.relations.length < 2) entry.relations.push(`imported by ${seed.path}`);
     }
     for (const importer of index.importedBy.get(seed.path) ?? []) {
       const entry = candidate(importer);
+      if (primary.has(seed)) entry.strong = true;
       entry.score += seed.score * 0.06;
       if (entry.relations.length < 2) entry.relations.push(`imports ${seed.path}`);
     }
@@ -167,6 +187,7 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
   if (CHANGE_WORDS.test(query)) {
     for (const path of paths.filter(isChangelog)) {
       const entry = candidate(path);
+      entry.strong = true;
       entry.score = Math.max(entry.score, bestScore * 0.3);
       entry.chunks = entry.chunks.length > 0 ? entry.chunks : [0];
       entry.names = [];
@@ -179,11 +200,13 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
   for (const path of open) {
     if (!index.files.has(path)) continue;
     const entry = candidate(path);
+    entry.strong = true;
     entry.score += bestScore * 0.1;
     entry.relations.push('open in the editor');
   }
   if (options.activeFile && index.files.has(options.activeFile)) {
     const entry = candidate(options.activeFile);
+    entry.strong = true;
     entry.score += bestScore * 0.2;
     if (!entry.relations.includes('open in the editor')) entry.relations.push('open in the editor');
   }
@@ -194,6 +217,10 @@ export function retrieve(index: ContextIndex, query: string, options: RetrieveOp
     entry.mentioned = true;
   }
 
+  // A file held only by a weak mention, with little match of its own, is noise on the card and in the pack.
+  for (const [path, entry] of candidates) {
+    if (!entry.mentioned && !entry.strong && entry.direct < bestScore * WEAK_LINK_FLOOR) candidates.delete(path);
+  }
   const ranked = top().sort((a, b) => Number(b.mentioned) - Number(a.mentioned) || b.score - a.score || a.path.localeCompare(b.path));
   const limit = options.limit ?? DEFAULT_LIMIT;
   const kept = ranked.filter((entry, position) => entry.mentioned || (position < limit + mentioned.size && entry.score > 0));
