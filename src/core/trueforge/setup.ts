@@ -82,11 +82,19 @@ export function chooseModel(configured: readonly string[], available: readonly s
   };
 }
 
-export function instantiateAgent(definition: AgentDefinition, model: string): AgentDefinition {
+/** How hard the model thinks: "low", "medium" or "high", forwarded as model.params.reasoning_effort. "default" sends nothing. */
+export interface ModelOptions {
+  reasoningEffort?: string | undefined;
+}
+
+export function instantiateAgent(definition: AgentDefinition, model: string, options: ModelOptions = {}): AgentDefinition {
   if (definition.manifest.model.name !== MODEL_PLACEHOLDER) {
     throw new Error(`Agent ${definition.name} must use ${MODEL_PLACEHOLDER} as its model name.`);
   }
-  return { ...definition, manifest: { ...definition.manifest, model: { ...definition.manifest.model, name: model } } };
+  const effort = options.reasoningEffort && options.reasoningEffort !== 'default' ? options.reasoningEffort : undefined;
+  const base = definition.manifest.model as { name: string; params?: Record<string, unknown> };
+  const params = effort ? { ...(base.params ?? {}), reasoning_effort: effort } : base.params;
+  return { ...definition, manifest: { ...definition.manifest, model: { ...base, name: model, ...(params ? { params } : {}) } } };
 }
 
 export async function registerMcpServer(
@@ -142,6 +150,7 @@ export async function setUpTrueForge(options: {
   configuredModels: readonly string[];
   agents: readonly AgentDefinition[];
   fetchFn?: typeof fetch;
+  reasoningEffort?: string | undefined;
 }): Promise<SetupResult> {
   const fetchFn = options.fetchFn ?? fetch;
   const health = await checkTrueForge(options.baseUrl, fetchFn);
@@ -152,7 +161,7 @@ export async function setUpTrueForge(options: {
   await registerMcpServer(options.baseUrl, options.mcp, fetchFn);
   const agents: Record<string, 'created' | 'updated'> = {};
   for (const definition of options.agents) {
-    agents[definition.name] = await upsertAgent(options.baseUrl, instantiateAgent(definition, choice.model), fetchFn);
+    agents[definition.name] = await upsertAgent(options.baseUrl, instantiateAgent(definition, choice.model, { reasoningEffort: options.reasoningEffort }), fetchFn);
   }
   const chain = options.configuredModels.filter((model) => health.models.includes(model));
   return { model: choice.model, chain: chain.length > 0 ? [...new Set(chain)] : [choice.model], note: choice.note, agents };
@@ -162,8 +171,14 @@ export async function setUpTrueForge(options: {
  * A session for a model other than the one the saved agent names: the same manifest from the committed
  * definition, with only the model swapped. This is how a fallback runs the very same agent.
  */
-export async function createSessionForModel(baseUrl: string, definition: AgentDefinition, model: string, fetchFn: typeof fetch = fetch): Promise<string> {
-  const { manifest } = instantiateAgent(definition, model);
+export async function createSessionForModel(
+  baseUrl: string,
+  definition: AgentDefinition,
+  model: string,
+  fetchFn: typeof fetch = fetch,
+  options: ModelOptions = {},
+): Promise<string> {
+  const { manifest } = instantiateAgent(definition, model, options);
   const body = await apiRequest(fetchFn, baseUrl, '/sessions', { method: 'POST', body: JSON.stringify({ agent: { spec: manifest } }) });
   const id = (body as { data?: { id?: string } }).data?.id;
   if (!id) throw new Error('TrueForge did not return a session id.');

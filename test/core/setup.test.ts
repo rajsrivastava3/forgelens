@@ -77,6 +77,13 @@ describe('instantiateAgent', () => {
     expect(definition.manifest.model.name).toBe(MODEL_PLACEHOLDER);
   });
 
+  it('sends the reasoning effort as model.params, and nothing for default', () => {
+    const definition = agent as AgentDefinition;
+    expect(instantiateAgent(definition, 'p/m', { reasoningEffort: 'low' }).manifest.model).toEqual({ name: 'p/m', params: { reasoning_effort: 'low' } });
+    expect(instantiateAgent(definition, 'p/m', { reasoningEffort: 'default' }).manifest.model).toEqual({ name: 'p/m' });
+    expect(instantiateAgent(definition, 'p/m').manifest.model).toEqual({ name: 'p/m' });
+  });
+
   it('rejects a definition with a hardcoded model', () => {
     expect(() =>
       instantiateAgent({ name: 'x', description: 'd', manifest: { model: { name: 'p/m' } } }, 'q/n'),
@@ -161,10 +168,10 @@ describe('the fallback chain and sessions per model', () => {
       calls.push({ path: String(input).slice(`${BASE}/api/v1`.length), body: JSON.parse(String(init?.body)) });
       return Response.json({ data: { id: 'sess-9' } });
     }) as typeof fetch;
-    expect(await createSessionForModel(BASE, agent as AgentDefinition, 'b/two', fetchFn)).toBe('sess-9');
+    expect(await createSessionForModel(BASE, agent as AgentDefinition, 'b/two', fetchFn, { reasoningEffort: 'medium' })).toBe('sess-9');
     const spec = (calls[0]?.body as { agent: { spec: { model: { name: string }; instructions: string } } }).agent.spec;
     expect(calls[0]?.path).toBe('/sessions');
-    expect(spec.model.name).toBe('b/two');
+    expect(spec.model).toEqual({ name: 'b/two', params: { reasoning_effort: 'medium' } });
     expect(spec.instructions).toBe(agent.manifest.instructions);
   });
 });
@@ -174,8 +181,8 @@ describe('agent mode is told to keep costs down', () => {
 
   it('plans in one turn and implements in the next, reading narrowly and testing and applying once', () => {
     expect(text).toContain('A change runs as two turns of this session.');
-    expect(text).toContain('Make at most 3 reads or searches, then reply with the plan and stop');
-    expect(text).toContain('at most 4 tool calls');
+    expect(text).toContain('Delegate the lookups to an explorer: call create_sub_agent once');
+    expect(text).toContain('at most 3 tool calls, return only file:line targets');
     expect(text).toContain('at most 150 lines a call');
     expect(text).toContain('Never read a range you have already read');
     expect(text).toContain('one stage_edit per file, with several edits in it');

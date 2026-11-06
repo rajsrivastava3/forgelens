@@ -60,7 +60,7 @@ async function main(): Promise<void> {
       const passed = checks.passed && record.status === 'done';
       results.push({ run, result: passed ? 'pass' : 'fail', ...record, checks, diff });
       console.log(
-        `Run ${run}: ${passed ? 'PASS' : 'FAIL'} on ${model}. ${record.secondsToDiff?.toFixed(1) ?? '-'} s to diff, ${record.seconds.toFixed(1)} s total, ${record.requests} requests, $${record.costUsd.toFixed(4)}, ${record.tokensIn}/${record.tokensOut} tokens, fallback: ${record.reviewNote ? 'yes' : 'no'}. Exact command: ${checks.exactCommand}. pytest: ${checks.pytest}.`,
+        `Run ${run}: ${passed ? 'PASS' : 'FAIL'} on ${model}. ${record.secondsToDiff?.toFixed(1) ?? '-'} s to diff, ${record.seconds.toFixed(1)} s total, ${record.requests} requests, $${record.costUsd.toFixed(4)}, ${record.tokensIn}/${record.tokensOut} tokens, fallback: ${record.reviewNote ? 'yes' : 'no'}, effort: ${record.reasoningEffort}. Exact command: ${checks.exactCommand}. pytest: ${checks.pytest}.`,
       );
       if (!passed) console.log(`  ${[record.error, ...checks.failures].filter(Boolean).join('\n  ')}`);
       console.log(`  Session: ${record.sessionUrl ?? 'none'}`);

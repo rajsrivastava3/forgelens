@@ -144,6 +144,17 @@
           ],
           "markdownDescription": "TrueForge model names, in order. The first that TrueForge has is the primary; the rest are fallbacks, used automatically when it fails. Pick from what TrueForge has with **ForgeLens: Choose model** (the model in the status bar)."
         },
+        "forgelens.reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "default",
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "low",
+          "markdownDescription": "How hard the model thinks before answering, sent to TrueForge as `model.params.reasoning_effort` for agent mode and inline edit. `default` sends nothing and leaves it to the provider. Lower is faster and cheaper."
+        },
         "forgelens.mcpPort": {
           "type": "number",
           "default": 8799,

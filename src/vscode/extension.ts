@@ -155,6 +155,7 @@ export function activate(context: vscode.ExtensionContext): void {
         mcp: { url: mcp.url, token: mcpToken },
         configuredModels: config().get<string[]>('models', []),
         agents: AGENTS,
+        reasoningEffort: config().get<string>('reasoningEffort', 'low'),
       });
       activeModel = result.model;
       modelChain = result.chain;
@@ -178,7 +179,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const controller = new AgentController({
     agentName: AGENT_NAME,
-    onTurnStart: () => mcp?.newTask(),
+    onTurnStart: (readLimit) => mcp?.newTask(readLimit),
     baseUrl,
     sessions: () => testSessions?.api ?? sdk().sessions,
     createSession: async (agentName, model) => {
@@ -187,7 +188,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (model === activeModel) return (await sdk().sessions.create({ agent: { name: agentName } })).data.id;
       const definition = AGENTS.find((candidate) => candidate.name === agentName);
       if (!definition) throw new Error(`No agent definition named ${agentName}.`);
-      return createSessionForModel(baseUrl(), definition, model);
+      return createSessionForModel(baseUrl(), definition, model, fetch, { reasoningEffort: config().get<string>('reasoningEffort', 'low') });
     },
     models: () => modelChain,
     firstTokenMs: config().get<number>('firstTokenTimeoutSeconds', 45) * 1000,

@@ -28,6 +28,8 @@ export const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
 export const BASE_URL = process.env['TRUEFORGE_BASE_URL'] ?? 'http://localhost:8790';
 const MCP_PORT = Number(process.env['FORGELENS_MCP_PORT'] ?? 8799);
 const MIN_FREE_RAM_MB = 1000;
+/** The rehearsals use the extension's default unless told otherwise. */
+export const REASONING_EFFORT = process.env['FORGELENS_REASONING_EFFORT'] ?? 'low';
 
 /**
  * USD per million tokens, from Google's paid-tier prices (aistudio.google.com/docs/pricing, checked 7 Nov 2026;
@@ -165,6 +167,9 @@ export interface RunRecord {
   seconds: number;
   /** From the instruction until the review opened, which is when the diff exists. */
   secondsToDiff: number | undefined;
+  /** Seconds from the instruction to each step a viewer sees. */
+  timeline: { planCard: number | undefined; firstStage: number | undefined; reviewOpen: number | undefined };
+  reasoningEffort: string;
   requests: number;
   tokensIn: number;
   tokensOut: number;
@@ -234,6 +239,8 @@ export async function startHarness(
   const token = randomBytes(24).toString('hex');
   let started = Date.now();
   let firstReviewMs: number | undefined;
+  let firstStageMs: number | undefined;
+  let planMs: number | undefined;
   let hunks = 0;
   let files: string[] = [];
   let requests = 0;
@@ -253,7 +260,10 @@ export async function startHarness(
     token,
     listenPort: MCP_PORT,
     shadowRoot: path.join(path.dirname(workspace), 'shadow'),
-    onToolCall: (call) => log(`[tool] ${call.tool} ok=${String(call.ok)}`),
+    onToolCall: (call) => {
+      log(`[tool] ${call.tool} ok=${String(call.ok)}`);
+      if (call.tool.startsWith('stage_') && call.ok) firstStageMs ??= Date.now() - started;
+    },
   });
   const callTool: Harness['callTool'] = async (name, args) => {
     const response = await fetch(mcp.url, {
@@ -269,7 +279,7 @@ export async function startHarness(
   const scripted = sessionsOverride?.(callTool);
   const controller: AgentController = new AgentController({
     agentName: 'forgelens-agent',
-    onTurnStart: () => mcp.newTask(),
+    onTurnStart: (readLimit) => mcp.newTask(readLimit),
     baseUrl: () => BASE_URL,
     sessions: () => scripted ?? client.sessions,
     createSession: async (agentName, sessionModel) => {
@@ -279,17 +289,18 @@ export async function startHarness(
       if (sessionModel === primary) return (await client.sessions.create({ agent: { name: agentName } })).data.id;
       const definition = loadAgents().find((candidate) => candidate.name === agentName);
       if (!definition) throw new Error(`No agent named ${agentName}.`);
-      return createSessionForModel(BASE_URL, definition, sessionModel);
+      return createSessionForModel(BASE_URL, definition, sessionModel, fetch, { reasoningEffort: REASONING_EFFORT });
     },
     ensureReady: async () => {
       if (scripted) return model;
-      const result = await setUpTrueForge({ baseUrl: BASE_URL, mcp: { url: mcp.url, token }, configuredModels: chain, agents: loadAgents() });
+      const result = await setUpTrueForge({ baseUrl: BASE_URL, mcp: { url: mcp.url, token }, configuredModels: chain, agents: loadAgents(), reasoningEffort: REASONING_EFFORT });
       primary = result.model;
       return result.model;
     },
     models: () => chain,
     firstTokenMs: Number(process.env['FORGELENS_FIRST_TOKEN_S'] ?? 45) * 1000,
     onChange: () => {
+      if (planMs === undefined && controller.view.items.some((item) => item.kind === 'plan')) planMs = Date.now() - started;
       const count = controller.view.items.filter((item) => item.kind === 'notice' && item.tone === 'warning').length;
       if (count > noticeCount) {
         noticeCount = count;
@@ -382,6 +393,12 @@ export async function startHarness(
         sessionUrl: view.sessionUrl,
         seconds,
         secondsToDiff: firstReviewMs === undefined ? undefined : firstReviewMs / 1000,
+        timeline: {
+          planCard: planMs === undefined ? undefined : planMs / 1000,
+          firstStage: firstStageMs === undefined ? undefined : firstStageMs / 1000,
+          reviewOpen: firstReviewMs === undefined ? undefined : firstReviewMs / 1000,
+        },
+        reasoningEffort: REASONING_EFFORT,
         requests,
         tokensIn,
         tokensOut,
