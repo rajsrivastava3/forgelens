@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { IMPLEMENT_MESSAGE, parsePlan, PLAN_RULE } from '../../src/core/context/plan';
+import { IMPLEMENT_MESSAGE, parsePlan, PLAN_READ_LIMIT, PLAN_RULE } from '../../src/core/context/plan';
 import { AgentController, type SendOptions } from '../../src/core/trueforge/agentController';
 import type { PlanItem } from '../../src/core/trueforge/runView';
 import type { SessionsApi, TurnEvent } from '../../src/core/trueforge/turnRunner';
@@ -47,7 +47,9 @@ describe('parsePlan', () => {
   it('asks for the plan form the parser reads, and caps reads before the plan', () => {
     expect(PLAN_RULE).toContain('start with the line "Plan:"');
     expect(PLAN_RULE).toContain('- <path>: <the exact functions or lines you will change or add>. Why: <one line>');
-    expect(PLAN_RULE).toContain('at most 3 reads or searches');
+    expect(PLAN_RULE).toContain('call create_sub_agent once to start an explorer');
+    expect(PLAN_RULE).toContain('use at most 3 tool calls');
+    expect(PLAN_READ_LIMIT).toBe(3);
     expect(IMPLEMENT_MESSAGE).toBe(
       'Implement your plan now. Stage all edits with as few stage_edit calls as possible, run the tests once with run_command target=staged, fix only what fails, then call apply_changes once.',
     );
@@ -110,6 +112,7 @@ function build(turns: Turn[]) {
 /** The same follow-up sendAgentRequest gives the controller. */
 const planThenImplement: SendOptions = {
   prepare: (message) => Promise.resolve({ prompt: `PACK\n\n## Request\n${message}\n\n${PLAN_RULE}` }),
+  firstTurnReadLimit: PLAN_READ_LIMIT,
   followUp: (output) => {
     const plan = parsePlan(output);
     return plan ? { prompt: IMPLEMENT_MESSAGE, plan } : undefined;
@@ -126,8 +129,8 @@ describe('plan, then implement', () => {
     const plan = controller.view.items.find((item): item is PlanItem => item.kind === 'plan');
     expect(plan?.steps.map((step) => step.path)).toEqual(['src/pkg/cli.py', 'tests/test_cli.py', 'docs/cli.rst', 'CHANGES.rst']);
     expect(controller.view.status).toBe('done');
-    // Each turn starts the read count again.
-    expect(onTurnStart).toHaveBeenCalledTimes(2);
+    // Each turn starts the read count again: 3 for the plan turn, the usual limit after.
+    expect(onTurnStart.mock.calls).toEqual([[3], [undefined]]);
   });
 
   it('sends nothing more after an answer to a question', async () => {

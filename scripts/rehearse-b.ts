@@ -147,6 +147,9 @@ async function main(): Promise<void> {
       results.push({ run, result: passed ? 'pass' : 'fail', ...record, checks, diff });
       console.log(`Run ${run}: ${passed ? 'PASS' : 'FAIL'} on ${model}. ${record.seconds.toFixed(1)} s, ${record.requests} requests, $${record.costUsd.toFixed(4)}, ${record.tokensIn}/${record.tokensOut} tokens.`);
       console.log(`  Context: ${record.contextTokens ?? 'none'} tokens, ${record.contextFiles.length} files. Top: ${record.contextFiles.slice(0, 4).join(', ')}`);
+      const t = record.timeline;
+      const at = (value: number | undefined): string => (value === undefined ? 'never' : `${value.toFixed(1)} s`);
+      console.log(`  Timeline: plan card ${at(t.planCard)}, first stage ${at(t.firstStage)}, review open ${at(t.reviewOpen)}, done ${record.seconds.toFixed(1)} s. Reasoning effort: ${record.reasoningEffort}.`);
       console.log(`  Plan: ${record.plan.length > 0 ? record.plan.map((step) => `${step.path} (${step.what}; why: ${step.why || 'none given'})`).join(' | ') : 'none'}`);
       console.log(`  Explorer thread: ${checks.explorerRan ? record.threads.join(', ') : 'no'}. Staged pytest: ${checks.stagedTestsRan ? 'yes' : 'no'}, auto-approved: ${checks.stagedTestsAutoApproved ? 'yes' : 'no'}.`);
       console.log(`  Changed: ${checks.changedFiles.join(', ') || 'none'}. Hunks: ${record.hunks}. ${record.reviewCard ?? 'No review.'}`);

@@ -26,7 +26,7 @@ export interface AgentControllerOptions {
   /** Takes over an approval, such as opening the hunk review for apply_changes. Undefined leaves it to decide(). */
   reviewApproval?: (approval: PendingApproval, signal: AbortSignal) => Promise<ApprovalDecision> | undefined;
   /** Called as each turn starts, before it is sent: a request's first turn, a follow-up, a retry. */
-  onTurnStart?: () => void;
+  onTurnStart?: (readLimit: number | undefined) => void;
   /** True when an approval needs no person. It still goes through TrueForge as an allow. */
   autoApprove?: (approval: PendingApproval) => boolean;
   /** A stop, a failure or a new chat: whatever is staged will never be reviewed, so drop it. */
@@ -52,6 +52,8 @@ export interface SendOptions {
    * first turn ended with. Not asked when the first turn already opened a review.
    */
   followUp?: (output: string) => { prompt: string; plan?: PlanStep[] } | undefined;
+  /** How many reads and searches the first turn may make. A follow-up turn gets the usual limit. */
+  firstTurnReadLimit?: number;
 }
 
 interface WaitingApproval {
@@ -162,7 +164,7 @@ export class AgentController {
         const fresh = index > 0 || attempt > 0 || sendOptions.freshSession === true;
         // A follow-up turn that has to start a new session carries what the old one knew: the request and the plan.
         const sent = fresh && freshPrompt ? freshPrompt : prompt;
-        const result = await this.attempt(model, agentName, sent, fresh);
+        const result = await this.attempt(model, agentName, sent, fresh, sendOptions.firstTurnReadLimit);
         if (result.kind === 'outcome') {
           const { outcome } = result;
           if (outcome.status === 'cancelled' || outcome.status === 'error') this.options.discardStaged?.();
@@ -173,7 +175,7 @@ export class AgentController {
               if (next.plan) this.builder.planCard(next.plan);
               this.options.onChange();
               const replay = `${sent}\n\n## Your plan, from the turn before\n${outcome.output}\n\n${next.prompt}`;
-              await this.runChain(chain.slice(index), agentName, next.prompt, { ...sendOptions, followUp: undefined, freshSession: false }, replay);
+              await this.runChain(chain.slice(index), agentName, next.prompt, { ...sendOptions, followUp: undefined, freshSession: false, firstTurnReadLimit: undefined }, replay);
               return;
             }
           }
@@ -222,9 +224,10 @@ export class AgentController {
     agentName: string,
     prompt: string,
     fresh: boolean,
+    readLimit?: number,
   ): Promise<{ kind: 'outcome'; outcome: TurnOutcome } | { kind: 'failed'; error: DescribedTurnError }> {
     this.model = model;
-    this.options.onTurnStart?.();
+    this.options.onTurnStart?.(readLimit);
     // A session keeps the model it started with, so a switch needs a new one.
     if (fresh || !this.sessionId || model !== this.sessionModel || agentName !== this.sessionAgent) {
       this.sessionId = await this.options.createSession(agentName, model);

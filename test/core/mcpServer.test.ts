@@ -6,6 +6,7 @@ import {
   startEditorMcpServer,
   type RunningEditorMcpServer,
   type ToolCallRecord,
+  PLAN_LIMIT_MESSAGE,
   READ_LIMIT_MESSAGE,
 } from '../../src/core/mcp/server';
 
@@ -159,6 +160,17 @@ describe('read limit', () => {
     expect(text(await read())).toBe(READ_LIMIT_MESSAGE);
     server.newTask();
     expect(text(await read())).toContain('1: print("hi")');
+    await client.close();
+  });
+  it('allows 3 in a plan turn, with a message that asks for the plan', async () => {
+    server.newTask(3);
+    const client = await connect();
+    for (let i = 0; i < 3; i += 1) expect((await client.callTool({ name: 'find_symbol', arguments: { name: 'hi' } })).isError).toBeFalsy();
+    const refused = await client.callTool({ name: 'read_file', arguments: { path: 'hello.py' } });
+    expect(refused.isError).toBe(true);
+    expect((refused.content as { text: string }[])[0]?.text).toBe(PLAN_LIMIT_MESSAGE);
+    server.newTask();
+    expect((await client.callTool({ name: 'read_file', arguments: { path: 'hello.py' } })).isError).toBeFalsy();
     await client.close();
   });
 });

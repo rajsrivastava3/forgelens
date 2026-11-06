@@ -11,11 +11,14 @@ export interface PlanStep {
   why: string;
 }
 
+/** Reads and searches allowed in the plan turn, the explorer's included. */
+export const PLAN_READ_LIMIT = 3;
+
 /** Added to the first turn of every agent request. A question is answered as before. */
 export const PLAN_RULE = [
   '## How to answer',
   'If the request is a question, answer it.',
-  'If it asks for a change, this turn is for the plan only. Do not stage anything yet. You may make at most 3 reads or searches first. Then reply with a short plan and stop: start with the line "Plan:", then one line per change, in this form:',
+  'If it asks for a change, this turn is for the plan only. Do not stage anything yet. Delegate the lookups: call create_sub_agent once to start an explorer, and give it the request, the Context Pack\'s file list, and these rules: use at most 3 tool calls (search_code and find_symbol are loaded on demand with get_tool_info), and return only file:line targets with one reason each. This turn allows 3 reads or searches in all, so do not read or search yourself. Then reply with a short plan and stop: start with the line "Plan:", then one line per change, in this form:',
   '- <path>: <the exact functions or lines you will change or add>. Why: <one line>',
   'List every file the change needs, including its tests, docs and changelog where the project keeps them. You will implement the plan in the next turn.',
 ].join('\n');

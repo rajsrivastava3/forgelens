@@ -2,7 +2,7 @@ import { parseMentions } from '../inline/mentions';
 import type { AgentController } from '../trueforge/agentController';
 import type { ContextEngine } from './engine';
 import { DEFAULT_BUDGET_TOKENS, formatPack, type PackMode, type PackResult } from './packer';
-import { IMPLEMENT_MESSAGE, parsePlan, PLAN_RULE } from './plan';
+import { IMPLEMENT_MESSAGE, parsePlan, PLAN_READ_LIMIT, PLAN_RULE } from './plan';
 
 export interface ContextCardItem {
   path: string;
@@ -92,6 +92,8 @@ export function sendAgentRequest(
         return { prompt: `${message}\n\n${PLAN_RULE}` };
       }
     },
+    // The plan turn's lookups go through an explorer subagent, capped at 3 by the MCP server.
+    firstTurnReadLimit: PLAN_READ_LIMIT,
     // A first turn that ends with a plan is followed, in the same session, by the turn that carries it out.
     followUp: (output) => {
       const plan = parsePlan(output);

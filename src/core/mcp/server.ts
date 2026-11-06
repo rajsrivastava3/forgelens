@@ -52,7 +52,7 @@ export interface EditorMcpServerOptions {
 export interface RunningEditorMcpServer {
   url: string;
   /** A new turn starts: the count of reads since the last staged edit starts again. */
-  newTask(): void;
+  newTask(readLimit?: number): void;
   close(): Promise<void>;
 }
 
@@ -64,10 +64,12 @@ const STAGING = { readOnlyHint: false, destructiveHint: false } as const;
 const CAPPED_TOOLS = new Set(['read_file', 'search_code', 'find_symbol', 'find_references', 'retrieve_context', 'repo_map']);
 export const READ_LIMIT = 8;
 export const READ_LIMIT_MESSAGE = 'Read limit reached. Stage your edits with stage_edit now; reads unlock after the next stage_edit.';
+/** The plan turn's limit is smaller, and nothing is staged in it, so it says what to do instead. */
+export const PLAN_LIMIT_MESSAGE = 'Read limit for this turn reached. Write your plan, or your answer, from what you have.';
 
 interface ServerParts {
   /** Reads and searches since the last staged edit or the start of the turn. Kept per server, not per request. */
-  gather: { count: number };
+  gather: { count: number; limit: number };
   flow: ReviewFlow;
   context: ContextEngine;
   shadow: ShadowWorkspace;
@@ -88,9 +90,10 @@ function buildMcpServer(options: EditorMcpServerOptions, parts: ServerParts): Mc
     if (tool.startsWith('stage_')) parts.gather.count = 0;
     if (CAPPED_TOOLS.has(tool)) {
       parts.gather.count += 1;
-      if (parts.gather.count > READ_LIMIT) {
+      if (parts.gather.count > parts.gather.limit) {
         options.onToolCall?.({ tool, args, at, ok: false });
-        return { content: [{ type: 'text' as const, text: READ_LIMIT_MESSAGE }], isError: true };
+        const text = parts.gather.limit < READ_LIMIT ? PLAN_LIMIT_MESSAGE : READ_LIMIT_MESSAGE;
+        return { content: [{ type: 'text' as const, text }], isError: true };
       }
     }
     try {
@@ -345,7 +348,7 @@ export function startEditorMcpServer(
   // One per server, not per request: staged edits must outlive the request that made them.
   const flow = options.flow ?? new ReviewFlow(options.port);
   const parts: ServerParts = {
-    gather: { count: 0 },
+    gather: { count: 0, limit: READ_LIMIT },
     flow,
     context: options.context ?? new ContextEngine(options.port),
     runner: options.runner ?? new CommandRunner(),
@@ -370,8 +373,9 @@ export function startEditorMcpServer(
       const { port } = http.address() as AddressInfo;
       resolve({
         url: `http://127.0.0.1:${port}/mcp`,
-        newTask: () => {
+        newTask: (readLimit = READ_LIMIT) => {
           parts.gather.count = 0;
+          parts.gather.limit = readLimit;
         },
         close: () =>
           new Promise((done, fail) => {
