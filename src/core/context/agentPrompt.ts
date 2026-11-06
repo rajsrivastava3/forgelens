@@ -2,6 +2,7 @@ import { parseMentions } from '../inline/mentions';
 import type { AgentController } from '../trueforge/agentController';
 import type { ContextEngine } from './engine';
 import { DEFAULT_BUDGET_TOKENS, formatPack, type PackMode, type PackResult } from './packer';
+import { IMPLEMENT_MESSAGE, parsePlan, PLAN_RULE } from './plan';
 
 export interface ContextCardItem {
   path: string;
@@ -68,7 +69,7 @@ export async function buildAgentPrompt(engine: ContextEngine, text: string, opti
   });
   const missing = notFound.length > 0 ? `\n\nMentioned but not found in the workspace: ${notFound.join(', ')}.` : '';
   return {
-    prompt: `${formatPack(pack)}${missing}\n\n## Request\n${text}`,
+    prompt: `${formatPack(pack)}${missing}\n\n## Request\n${text}\n\n${PLAN_RULE}`,
     card: contextCard(pack, notFound),
   };
 }
@@ -88,8 +89,13 @@ export function sendAgentRequest(
       } catch (error) {
         // The agent can still search for itself, so a failed pack should not stop the request.
         log(`Context Pack failed: ${String(error)}`);
-        return { prompt: message };
+        return { prompt: `${message}\n\n${PLAN_RULE}` };
       }
+    },
+    // A first turn that ends with a plan is followed, in the same session, by the turn that carries it out.
+    followUp: (output) => {
+      const plan = parsePlan(output);
+      return plan ? { prompt: IMPLEMENT_MESSAGE, plan } : undefined;
     },
   });
 }

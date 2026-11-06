@@ -1,5 +1,6 @@
 import type { ReviewCard } from '../changeset/reviewFlow';
 import type { ContextCard } from '../context/agentPrompt';
+import type { PlanStep } from '../context/plan';
 import { AgentRun, STOPPED_DURING_APPROVAL, type ApprovalDecision } from './agentRun';
 import { describeTurnError, failureAction, isConnectionFailure, shortReason, trueForgeUnreachableMessage, type DescribedTurnError } from './errors';
 import { RunViewBuilder, type RunView } from './runView';
@@ -24,8 +25,8 @@ export interface AgentControllerOptions {
   onEvent?: (event: TurnEvent) => void;
   /** Takes over an approval, such as opening the hunk review for apply_changes. Undefined leaves it to decide(). */
   reviewApproval?: (approval: PendingApproval, signal: AbortSignal) => Promise<ApprovalDecision> | undefined;
-  /** Called as each user request starts, before anything is sent. */
-  onUserRequest?: () => void;
+  /** Called as each turn starts, before it is sent: a request's first turn, a follow-up, a retry. */
+  onTurnStart?: () => void;
   /** True when an approval needs no person. It still goes through TrueForge as an allow. */
   autoApprove?: (approval: PendingApproval) => boolean;
   /** A stop, a failure or a new chat: whatever is staged will never be reviewed, so drop it. */
@@ -46,6 +47,11 @@ export interface SendOptions {
   prepare?: (message: string) => Promise<{ prompt: string; card?: ContextCard }>;
   /** Runs after a finished turn, while Stop still works. A returned message is shown as a failure. */
   afterTurn?: (output: string, signal: AbortSignal) => Promise<string | undefined>;
+  /**
+   * Reads a finished first turn and may ask for one more in the same session, such as carrying out the plan the
+   * first turn ended with. Not asked when the first turn already opened a review.
+   */
+  followUp?: (output: string) => { prompt: string; plan?: PlanStep[] } | undefined;
 }
 
 interface WaitingApproval {
@@ -100,7 +106,6 @@ export class AgentController {
     if (!message || this.busy) return;
     this.busy = true;
     this.stopRequested = false;
-    this.options.onUserRequest?.();
     this.builder.userMessage(sendOptions.display ?? message);
     this.options.onChange();
     const agentName = sendOptions.agentName ?? this.options.agentName;
@@ -145,7 +150,7 @@ export class AgentController {
   }
 
   /** Tries each model in turn, retrying the ones whose failure may pass. The same prompt and Context Pack go to each. */
-  private async runChain(chain: readonly string[], agentName: string, prompt: string, sendOptions: SendOptions): Promise<void> {
+  private async runChain(chain: readonly string[], agentName: string, prompt: string, sendOptions: SendOptions, freshPrompt?: string): Promise<void> {
     const delays = this.options.retryDelaysMs ?? [1_000, 3_000];
     for (let index = 0; index < chain.length; index += 1) {
       const model = chain[index] as string;
@@ -155,11 +160,23 @@ export class AgentController {
           return;
         }
         const fresh = index > 0 || attempt > 0 || sendOptions.freshSession === true;
-        const result = await this.attempt(model, agentName, prompt, fresh);
+        // A follow-up turn that has to start a new session carries what the old one knew: the request and the plan.
+        const sent = fresh && freshPrompt ? freshPrompt : prompt;
+        const result = await this.attempt(model, agentName, sent, fresh);
         if (result.kind === 'outcome') {
           const { outcome } = result;
           if (outcome.status === 'cancelled' || outcome.status === 'error') this.options.discardStaged?.();
           if (outcome.status === 'cancelled' && outcome.reason === STOPPED_DURING_APPROVAL) this.sessionId = undefined;
+          if (outcome.status === 'done' && sendOptions.followUp && !this.stopRequested && !this.builder.reviewedThisRequest()) {
+            const next = sendOptions.followUp(outcome.output);
+            if (next) {
+              if (next.plan) this.builder.planCard(next.plan);
+              this.options.onChange();
+              const replay = `${sent}\n\n## Your plan, from the turn before\n${outcome.output}\n\n${next.prompt}`;
+              await this.runChain(chain.slice(index), agentName, next.prompt, { ...sendOptions, followUp: undefined, freshSession: false }, replay);
+              return;
+            }
+          }
           if (outcome.status === 'done' && sendOptions.afterTurn && !this.stopRequested) {
             await this.runAfterTurn(outcome.output, sendOptions.afterTurn);
           }
@@ -207,6 +224,7 @@ export class AgentController {
     fresh: boolean,
   ): Promise<{ kind: 'outcome'; outcome: TurnOutcome } | { kind: 'failed'; error: DescribedTurnError }> {
     this.model = model;
+    this.options.onTurnStart?.();
     // A session keeps the model it started with, so a switch needs a new one.
     if (fresh || !this.sessionId || model !== this.sessionModel || agentName !== this.sessionAgent) {
       this.sessionId = await this.options.createSession(agentName, model);

@@ -6,6 +6,7 @@ import { buildAgentPrompt } from '../../src/core/context/agentPrompt';
 import { chunkFile } from '../../src/core/context/chunker';
 import { ContextEngine, ContextIndex, indexFile, type IndexStore } from '../../src/core/context/engine';
 import { buildPack, docSections, formatPack } from '../../src/core/context/packer';
+import { PLAN_RULE } from '../../src/core/context/plan';
 import { buildModuleMap, isChangelog, isDocFile, isTestFile, moduleStem, pairedFiles, parsePythonImports, resolveImports } from '../../src/core/context/relations';
 import { retrieve } from '../../src/core/context/retrieve';
 import { pathTokens, splitIdentifier, stem, tokenize } from '../../src/core/context/tokenize';
@@ -450,7 +451,8 @@ describe('buildAgentPrompt', () => {
   it('puts the pack ahead of the request and fills the card', async () => {
     const { prompt, card } = await buildAgentPrompt(new ContextEngine(new NodeEditorPort(dir)), 'change alpha handler', { budgetTokens: 2000 });
     expect(prompt.indexOf('## Context Pack')).toBeLessThan(prompt.indexOf('## Request'));
-    expect(prompt.endsWith('## Request\nchange alpha handler')).toBe(true);
+    expect(prompt).toContain('## Request\nchange alpha handler\n\n## How to answer');
+    expect(prompt.endsWith(PLAN_RULE)).toBe(true);
     expect(card.budgetTokens).toBe(2000);
     expect(card.items[0]).toMatchObject({ path: 'alpha.py', mode: 'full', mentioned: false });
     expect(card.items[0]?.reason.length).toBeGreaterThan(5);

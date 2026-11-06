@@ -428,3 +428,11 @@ button:disabled {
   background: var(--vscode-statusBarItem-errorBackground, #c72e2e);
   color: var(--vscode-statusBarItem-errorForeground, #fff);
 }
+
+.plan-card {
+  border-left: 3px solid var(--vscode-charts-green, #3fb950);
+}
+
+.plan-what {
+  margin-top: 2px;
+}

@@ -1,6 +1,7 @@
 import type { TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import type { ReviewCard } from '../changeset/reviewFlow';
 import type { ContextCard } from '../context/agentPrompt';
+import type { PlanStep } from '../context/plan';
 import { resolveToolCall, shortArgs } from './toolCalls';
 import { messageText, type TurnEvent, type TurnOutcome } from './turnRunner';
 
@@ -62,7 +63,14 @@ export interface NoticeItem {
   tone?: 'info' | 'warning';
 }
 
-export type ViewItem = ToolItem | TextItem | UserItem | ThreadItem | ReviewItem | ContextItem | NoticeItem;
+/** The plan a change's first turn ended with: each file, what will change in it, and why. */
+export interface PlanItem {
+  kind: 'plan';
+  id: string;
+  steps: PlanStep[];
+}
+
+export type ViewItem = ToolItem | TextItem | UserItem | ThreadItem | ReviewItem | ContextItem | NoticeItem | PlanItem;
 
 export interface RunView {
   status: RunStatus;
@@ -180,6 +188,16 @@ export class RunViewBuilder {
   /** Shows what the Context Pack holds, right under the request it belongs to. */
   contextCard(card: ContextCard): void {
     this.view.items.push({ kind: 'context', id: `context-${this.turnCounter}`, ...card });
+  }
+
+  planCard(steps: PlanStep[]): void {
+    this.view.items.push({ kind: 'plan', id: `plan-${this.turnCounter}`, steps });
+  }
+
+  /** True when a review card appeared after the latest request. */
+  reviewedThisRequest(): boolean {
+    const lastUser = this.view.items.map((item) => item.kind).lastIndexOf('user');
+    return this.view.items.slice(lastUser + 1).some((item) => item.kind === 'review');
   }
 
   toolAutoApproved(toolCallId: string): void {

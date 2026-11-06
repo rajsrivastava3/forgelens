@@ -247,6 +247,40 @@ function renderContext(): Rendered {
   };
 }
 
+function renderPlan(): Rendered {
+  const node = element('details', 'context-card plan-card');
+  node.open = true;
+  const summary = element('summary', 'context-summary');
+  const list = element('div', 'context-items');
+  node.append(summary, list);
+  return {
+    node,
+    signature: '',
+    update: (item) => {
+      if (item.kind !== 'plan') return;
+      summary.textContent = `Plan: ${item.steps.length} ${item.steps.length === 1 ? 'file' : 'files'}, implementing next`;
+      list.replaceChildren(
+        ...item.steps.map((step) => {
+          const row = element('div', 'context-row');
+          const head = element('div', 'context-head');
+          const file = element('span', 'context-path');
+          file.textContent = step.path;
+          head.append(file);
+          const what = element('div', 'plan-what');
+          what.textContent = step.what;
+          row.append(head, what);
+          if (step.why) {
+            const why = element('div', 'context-why');
+            why.textContent = `Why: ${step.why}`;
+            row.append(why);
+          }
+          return row;
+        }),
+      );
+    },
+  };
+}
+
 function renderNotice(): Rendered {
   const node = element('div', 'notice');
   return {
@@ -302,6 +336,8 @@ function renderItems(items: readonly ViewItem[], container: HTMLElement): void {
                 ? renderReview()
                 : item.kind === 'context'
                   ? renderContext()
+                  : item.kind === 'plan'
+                    ? renderPlan()
                   : item.kind === 'notice'
                     ? renderNotice()
                     : renderThread();
