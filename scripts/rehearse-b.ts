@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { sendAgentRequest } from '../src/core/context/agentPrompt';
 import { addSpend, arg, checkResources, checkSpend, INR_PER_USD, exec, freshClone, isModelBlocked, PYTHON, resetClone, startHarness, verifyEnv, writeResults, type RunRecord, type ToolRecord } from './rehearse/harness';
+import { loadFixture } from './rehearse/fixtures';
 import { scriptedSessions, type ScriptStep } from './rehearse/scripted';
 
 const INSTRUCTION =
@@ -100,11 +101,21 @@ async function verify(clone: string, workDir: string, tools: readonly ToolRecord
   };
 }
 
-/** A known answer, only for proving these checks. A real run never sees it. */
-function dryRunSteps(mode: string): ScriptStep[] {
-  // The scripted answer for this dry run is kept outside the repository.
-  void mode;
-  return [];
+/** A scripted run for proving the checks. Answers to the fixed task are kept outside the repository. */
+export function dryRunSteps(mode: string): ScriptStep[] {
+  if (mode === 'costly') {
+    // One request that reports more tokens than the per-run guard allows: the guard must stop the run before the next.
+    const shell = { type: 'model.message', id: 'costly-1', threadId: 'main', createdAt: new Date().toISOString(), content: '', toolCalls: [] };
+    const usage = { inputTokens: 400_000, outputTokens: 10, cacheReadTokens: 0, inputTokensBreakdown: {} };
+    return [
+      { kind: 'event', event: shell },
+      { kind: 'event', event: { type: 'model.message.delta', id: 'costly-1', threadId: 'main', createdAt: new Date().toISOString(), content: 'Planning.', usage } },
+      { kind: 'hook', run: () => new Promise((resolve) => setTimeout(resolve, 300)) },
+      { kind: 'tool', name: 'search_code', args: { query: 'this call must never run' } },
+      { kind: 'text', text: 'Done.' },
+    ];
+  }
+  return loadFixture(`task-b-${mode}`);
 }
 
 async function main(): Promise<void> {
@@ -171,7 +182,7 @@ async function main(): Promise<void> {
   console.log(`Passed ${results.filter((item) => item.result === 'pass').length} of ${results.filter((item) => item.result !== 'blocked').length} completed runs.`);
 }
 
-void main().catch((error: unknown) => {
+if (require.main === module) void main().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
 });

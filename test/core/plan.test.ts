@@ -11,10 +11,10 @@ const PLAN_TEXT = [
   'I checked the pack. Here is what I will do.',
   '',
   '**Plan:**',
-  '- `src/pkg/cli.py`: add `export_command` after `routes_command` (line 1069) and register it in `FlaskGroup.__init__` (line 596). Why: built-in commands live and are registered here.',
-  '- tests/test_cli.py (new test): add `test_export_command` near the routes tests. Why: the command needs a test.',
+  '- `src/pkg/cli.py`: add `export_command` after `list_command` (line 1069) and register it in `Group.__init__` (line 596). Why: built-in commands live and are registered here.',
+  '- tests/test_cli.py (new test): add `test_export_command` near the list tests. Why: the command needs a test.',
   '  It checks the masked keys too.',
-  '1. docs/cli.rst: add a "Show the Configuration" section after "Open a Shell" (line 133). Why: built-in commands are documented here.',
+  '1. docs/cli.rst: add a "Exporting" section after "Listing" (line 133). Why: built-in commands are documented here.',
   '- CHANGES.rst: add an entry under Unreleased.',
   '  Why: user-facing changes are recorded.',
 ].join('\n');
@@ -24,11 +24,11 @@ describe('parsePlan', () => {
     expect(parsePlan(PLAN_TEXT)).toEqual([
       {
         path: 'src/pkg/cli.py',
-        what: 'add `export_command` after `routes_command` (line 1069) and register it in `FlaskGroup.__init__` (line 596)',
+        what: 'add `export_command` after `list_command` (line 1069) and register it in `Group.__init__` (line 596)',
         why: 'built-in commands live and are registered here.',
       },
-      { path: 'tests/test_cli.py', what: 'add `test_export_command` near the routes tests', why: 'the command needs a test. It checks the masked keys too.' },
-      { path: 'docs/cli.rst', what: 'add a "Show the Configuration" section after "Open a Shell" (line 133)', why: 'built-in commands are documented here.' },
+      { path: 'tests/test_cli.py', what: 'add `test_export_command` near the list tests', why: 'the command needs a test. It checks the masked keys too.' },
+      { path: 'docs/cli.rst', what: 'add a "Exporting" section after "Listing" (line 133)', why: 'built-in commands are documented here.' },
       { path: 'CHANGES.rst', what: 'add an entry under Unreleased', why: 'user-facing changes are recorded.' },
     ]);
   });
@@ -122,7 +122,7 @@ const planThenImplement: SendOptions = {
 describe('plan, then implement', () => {
   it('shows the plan and sends the implement turn in the same session', async () => {
     const { controller, tf, onTurnStart } = build([{ text: PLAN_TEXT }, { text: 'Applied 4 of 4 hunks.' }]);
-    await controller.send('add a config command', planThenImplement);
+    await controller.send('add an export command', planThenImplement);
     expect(tf.sent.map((turn) => turn.sessionId)).toEqual(['s1', 's1']);
     expect(tf.sent[0]?.text).toContain('## How to answer');
     expect(tf.sent[1]?.text).toBe(IMPLEMENT_MESSAGE);
@@ -142,10 +142,10 @@ describe('plan, then implement', () => {
 
   it('when the implement turn fails over to the fallback, the new session gets the request, the plan and the step', async () => {
     const { controller, tf } = build([{ text: PLAN_TEXT }, { error: '[Model Error] Request failed (401): Unauthorized.' }, { text: 'Applied.' }]);
-    await controller.send('add a config command', planThenImplement);
+    await controller.send('add an export command', planThenImplement);
     expect(tf.sent.map((turn) => `${turn.sessionId}:${turn.model}`)).toEqual([`s1:${PRIMARY}`, `s1:${PRIMARY}`, `s2:${FALLBACK}`]);
     const replay = tf.sent[2]?.text ?? '';
-    expect(replay).toContain('## Request\nadd a config command');
+    expect(replay).toContain('## Request\nadd an export command');
     expect(replay).toContain('## Your plan, from the turn before\nI checked the pack.');
     expect(replay.endsWith(IMPLEMENT_MESSAGE)).toBe(true);
     expect(controller.view.items.filter((item) => item.kind === 'plan')).toHaveLength(1);
@@ -160,7 +160,7 @@ describe('plan, then implement', () => {
         return planThenImplement.followUp?.(output);
       },
     };
-    await controller.send('add a config command', options);
+    await controller.send('add an export command', options);
     expect(tf.sent).toHaveLength(1);
   });
 });

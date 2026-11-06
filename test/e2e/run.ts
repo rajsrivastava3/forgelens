@@ -823,6 +823,25 @@ function verifyEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return { ...process.env, PATH: VENV_SCRIPTS + path.delimiter + (process.env['PATH'] ?? ''), PYTHONPATH: 'src', PYTHONDONTWRITEBYTECODE: '1', ...extra };
 }
 
+/** The toy edit, on disk: nope and nah are false, 1 is still true, and the helpers tests pass. */
+async function verifyToyEdit(): Promise<{ passed: boolean; failures: string[]; values: Record<string, string>; pytest: string }> {
+  const failures: string[] = [];
+  const python = path.join(VENV_SCRIPTS, 'python.exe');
+  const values: Record<string, string> = {};
+  for (const [value, want] of Object.entries({ nope: 'False', NAH: 'False', '1': 'True' })) {
+    values[value] = (await exec(python, ['-c', VERIFY_PY], { cwd: workspace, env: verifyEnv({ FLASK_DEBUG: value }), timeout: 120_000 })).stdout.trim();
+    if (values[value] !== want) failures.push('FLASK_DEBUG=' + value + ' gave ' + values[value] + ', wanted ' + want);
+  }
+  let pytest: string;
+  try {
+    pytest = (await exec(python, ['-m', 'pytest', 'tests/test_helpers.py', '-q', '-p', 'no:cacheprovider'], { cwd: workspace, env: verifyEnv(), timeout: 180_000 })).stdout.trim().split('\n').at(-1) ?? '';
+  } catch (error) {
+    pytest = 'FAILED: ' + String((error as { stdout?: string }).stdout ?? error).trim().split('\n').slice(-3).join(' ');
+    failures.push(pytest);
+  }
+  return { passed: failures.length === 0, failures, values, pytest };
+}
+
 /** The exact Task A checks, against the throwaway clone. */
 async function verifyTaskA(): Promise<{ passed: boolean; failures: string[]; values: Record<string, string>; pytest: string; docstring: string; flaskFrom: string; exact: string }> {
   const failures: string[] = [];
@@ -905,7 +924,8 @@ async function startInline(instruction: string, shotName?: string): Promise<{ ru
   return { running };
 }
 
-const taskAEdits = {
+/** A toy change on Task A's function, so the scripted run proves the pipeline without holding the task's answer. */
+const toyEdits = {
   path: HELPERS,
   edits: [
     {
@@ -935,7 +955,7 @@ async function undoToClean(): Promise<void> {
 async function scenarioInline(): Promise<void> {
   const original = onDisk(HELPERS);
   let prompt = '';
-  await useScripted({ onPrompt: (text) => (prompt = text), beforeCall: async () => void (await callMcpTool('stage_edit', taskAEdits)) });
+  await useScripted({ onPrompt: (text) => (prompt = text), beforeCall: async () => void (await callMcpTool('stage_edit', toyEdits)) });
   const lines = await selectGetDebugFlag();
   const { running } = await startInline(TASK_A_INSTRUCTION, 'p3-1-input-at-selection');
   await waitForReview();
@@ -953,9 +973,8 @@ async function scenarioInline(): Promise<void> {
   await acceptAndApply();
   await running;
   await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
-  const verification = await verifyTaskA();
-  await showVerification('p3-4-verification-output');
-  check(verification.passed, 'Task A checks: ' + verification.failures.join('; '));
+  const verification = await verifyToyEdit();
+  check(verification.passed, 'the toy edit works on disk: ' + verification.failures.join('; '));
   check((await gitStatus()).includes('helpers.py'), 'only helpers.py changed: ' + (await gitStatus()));
   await undoToClean();
   check(onDisk(HELPERS) === original, 'undo restored the file');
@@ -1007,7 +1026,7 @@ async function scenarioInlineCancel(): Promise<void> {
   check((await gitStatus()) === '', 'git is clean');
 
   // The panel's Stop during the review.
-  await useScripted({ beforeCall: async () => void (await callMcpTool('stage_edit', taskAEdits)) });
+  await useScripted({ beforeCall: async () => void (await callMcpTool('stage_edit', toyEdits)) });
   await selectGetDebugFlag();
   ({ running } = await startInline(TASK_A_INSTRUCTION));
   await waitForReview();

@@ -8,16 +8,16 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { readSelection, sendInlineEdit, type InlineTarget } from '../src/core/inline/inlineEdit';
 import { addSpend, arg, checkResources, checkSpend, INR_PER_USD, exec, freshClone, isModelBlocked, resetClone, startHarness, writeResults, type RunRecord } from './rehearse/harness';
+import { loadFixture } from './rehearse/fixtures';
 import { scriptedSessions, type ScriptStep } from './rehearse/scripted';
 import { selectGetDebugFlag as selectFunction, TASK_A_FILE, TASK_A_INSTRUCTION, verifyTaskA as verify, type TaskAChecks as Checks } from './rehearse/taskA';
 
 const INSTRUCTION = TASK_A_INSTRUCTION;
 const FILE = TASK_A_FILE;
 
-function dryRunSteps(mode: string): ScriptStep[] {
-  // The scripted answer for this dry run is kept outside the repository.
-  void mode;
-  return [];
+/** The scripted answer for a dry run, kept outside the repository. */
+export function dryRunSteps(mode: string): ScriptStep[] {
+  return loadFixture(`task-a-${mode}`);
 }
 
 async function main(): Promise<void> {
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   console.log(`Passed ${passes} of ${results.filter((item) => item.result !== 'blocked').length} completed runs.`);
 }
 
-void main().catch((error: unknown) => {
+if (require.main === module) void main().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
 });
