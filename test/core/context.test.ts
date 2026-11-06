@@ -15,7 +15,7 @@ import { repoMapTool } from '../../src/core/tools/workspaceViews';
 
 const TASK_B =
   'Add a new built-in CLI command flask config that prints the loaded application\'s configuration as JSON, masking the values of any key containing SECRET, PASSWORD, TOKEN or KEY as "***". It must appear in flask --help, be covered by a test, and be documented alongside the other built-in commands.';
-const FLASK = path.resolve(__dirname, '../../../flask');
+const FLASK = process.env['FORGELENS_FLASK'] ?? path.resolve(__dirname, '../../../flask');
 const hasFlask = (() => {
   try {
     return statSync(path.join(FLASK, 'src/flask/cli.py')).isFile();

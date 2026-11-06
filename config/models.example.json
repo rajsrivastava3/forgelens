@@ -1,7 +1,9 @@
 {
-  "//": "Example only. API keys live in TrueForge (Settings > Models), never in this repo. This lists TrueForge model names in fallback order; copy the idea into the forgelens.models VS Code setting.",
+  "//": "Example only. API keys live in TrueForge (Settings > Models at http://localhost:8790), never in this repository or in VS Code settings. Copy these keys into your VS Code settings.json. forgelens.models lists TrueForge model names (provider/model) in fallback order: the first one TrueForge has is the primary, the rest are used automatically when it fails.",
   "forgelens.models": [
-    "google-gemini/gemini-flash-latest",
-    "groq/<your-groq-model-name>"
-  ]
+    "google-gemini/gemini-3-8-flash",
+    "google-gemini/gemini-3-6-flash"
+  ],
+  "forgelens.reasoningEffort": "low",
+  "forgelens.context.budgetTokens": 6000
 }

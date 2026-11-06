@@ -28,12 +28,14 @@ for (const drive of new Set([systemDrive, path.parse(path.resolve(process.argv[2
 }
 
 const work = path.resolve(process.argv[2] ?? path.join(root, 'out/e2e-work'));
+// The Flask checkout to copy: ../flask beside this repository, or FORGELENS_FLASK.
+const flask = path.resolve(process.env.FORGELENS_FLASK ?? path.join(root, '../flask'));
 const profile = path.join(work, 'profile');
 const workspace = path.join(work, 'flask-copy');
 
 rmSync(workspace, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
-execFileSync('git', ['clone', '--quiet', '-c', 'core.autocrlf=false', path.resolve(root, '../flask'), workspace]);
+execFileSync('git', ['clone', '--quiet', '-c', 'core.autocrlf=false', flask, workspace]);
 
 // A separate copy of VS Code, so a test never depends on or disturbs the installed one.
 const executable = process.env.VSCODE_EXE ?? (await downloadAndUnzipVSCode('stable'));
@@ -62,12 +64,13 @@ writeFileSync(
 );
 
 // A clone has no .venv of its own, so staged test runs need to find the project's Python on the path.
-const venvScripts = path.resolve(root, '../flask/.venv/Scripts');
+const venvScripts = path.join(flask, '.venv/Scripts');
 const env = {
   ...process.env,
   PATH: `${venvScripts}${path.delimiter}${process.env.PATH ?? ''}`,
   FORGELENS_E2E: '1',
   FORGELENS_E2E_ROOT: root,
+  FORGELENS_FLASK: flask,
   FORGELENS_E2E_WORKSPACE: workspace,
   FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'review,reject,stop-review,stop-staging,drift,crlf,create-delete,ctrl-z,keybindings,inline,inline-fallback,inline-cancel,inline-mentions,agent-flow,plan-card,command-asks,panel-mentions,fallback-banner',
 };

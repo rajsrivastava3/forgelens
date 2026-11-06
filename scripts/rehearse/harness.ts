@@ -21,7 +21,8 @@ import type { SessionsApi } from '../../src/core/trueforge/turnRunner';
 
 export const exec = promisify(execFile);
 export const ROOT = path.resolve(__dirname, '../..');
-export const FLASK = path.resolve(ROOT, '../flask');
+/** The Flask checkout the throwaway clones come from: ../flask beside this repository, or FORGELENS_FLASK. */
+export const FLASK = process.env['FORGELENS_FLASK'] ?? path.resolve(ROOT, '../flask');
 export const VENV_SCRIPTS = path.join(FLASK, '.venv/Scripts');
 export const PYTHON = path.join(VENV_SCRIPTS, 'python.exe');
 export const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';

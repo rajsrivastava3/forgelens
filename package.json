@@ -294,7 +294,8 @@
     "test:e2e": "node test/e2e/launch.mjs",
     "rehearse:a": "tsx scripts/rehearse-a.ts",
     "rehearse:b": "tsx scripts/rehearse-b.ts",
-    "rehearse:c": "tsx scripts/rehearse-c.ts"
+    "rehearse:c": "tsx scripts/rehearse-c.ts",
+    "setup:agents": "tsx scripts/setup-agents.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

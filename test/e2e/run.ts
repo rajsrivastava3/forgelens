@@ -393,7 +393,7 @@ async function lensDecision(file: string, hunkId: string, accept: boolean, empty
 
 async function scenarioReview(): Promise<void> {
   check(vscode.workspace.getConfiguration('diffEditor').get('codeLens') === true, 'the extension turned on CodeLens in diff editors');
-  check(path.resolve(workspace) !== path.resolve(root, '../flask'), 'this runs on a copy, not the real flask folder');
+  check(path.resolve(workspace) !== path.resolve(process.env['FORGELENS_FLASK'] ?? path.join(root, '../flask')), 'this runs on a copy, not the real flask folder');
 
   // 1. Partial accept across two files, through the real MCP server and the real review UI.
   await useScripted();
@@ -815,7 +815,8 @@ async function scenarioKeybindings(): Promise<void> {
 }
 
 const TASK_A_INSTRUCTION = "Treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value that is treated as false.";
-const VENV_SCRIPTS = path.join(root, '../flask/.venv/Scripts');
+const FLASK_SOURCE = process.env['FORGELENS_FLASK'] ?? path.join(root, '../flask');
+const VENV_SCRIPTS = path.join(FLASK_SOURCE, '.venv/Scripts');
 const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
 const VERIFY_PY = 'from flask.helpers import get_debug_flag; print(get_debug_flag())';
 

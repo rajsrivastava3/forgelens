@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { startEditorMcpServer } from '../src/core/mcp/server';
 import { setUpTrueForge } from '../src/core/trueforge/setup';
 import { NodeEditorPort } from '../src/core/tools/nodeEditorPort';
-import { BASE_URL, loadAgents } from './rehearse/harness';
+import { BASE_URL, loadAgents, REASONING_EFFORT } from './rehearse/harness';
 
 async function main(): Promise<void> {
   const chain = process.argv.slice(2);
@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   const token = randomBytes(24).toString('hex');
   const mcp = await startEditorMcpServer({ port: new NodeEditorPort(process.cwd()), token });
   try {
-    const result = await setUpTrueForge({ baseUrl: BASE_URL, mcp: { url: mcp.url, token }, configuredModels: chain, agents: loadAgents() });
+    const result = await setUpTrueForge({ baseUrl: BASE_URL, mcp: { url: mcp.url, token }, configuredModels: chain, agents: loadAgents(), reasoningEffort: REASONING_EFFORT });
     console.log(`Primary: ${result.model}. Chain: ${result.chain.join(', ')}. Agents: ${JSON.stringify(result.agents)}`);
   } finally {
     await mcp.close();
