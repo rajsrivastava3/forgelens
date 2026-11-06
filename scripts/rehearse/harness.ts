@@ -30,22 +30,34 @@ const MCP_PORT = Number(process.env['FORGELENS_MCP_PORT'] ?? 8799);
 const MIN_FREE_RAM_MB = 1000;
 
 /**
- * USD per million tokens, from Google's published paid-tier prices (checked 6 Nov 2026, valid to 31 Dec 2026).
- * TrueForge reports no cost for these models, so cost is worked out here. Reasoning tokens are added to output
- * as well, which may count them twice: an estimate that can only run high. Unlisted models count as free.
+ * USD per million tokens, from Google's paid-tier prices (aistudio.google.com/docs/pricing, checked 7 Nov 2026;
+ * the Flash prices hold to 31 Dec 2026, Pro is for prompts up to 200k tokens). TrueForge reports no cost for these
+ * models, so cost is worked out here. Input tokens include cache reads, which cost a tenth. Output includes
+ * thinking (TrueForge's reasoning count is part of it), so thinking is not added again. Unlisted models are free.
  */
-const PRICES: Record<string, { input: number; output: number }> = {
-  'google-gemini/gemini-3-8-flash': { input: 0.75, output: 3.75 },
-  'google-gemini/gemini-3-6-flash': { input: 0.75, output: 3.75 },
+const PRICES: Record<string, { input: number; cacheRead: number; output: number }> = {
+  'google-gemini/gemini-3-8-flash': { input: 0.75, cacheRead: 0.075, output: 3.75 },
+  'google-gemini/gemini-3-6-flash': { input: 0.75, cacheRead: 0.075, output: 3.75 },
+  'google-gemini/gemini-3-1-pro-preview': { input: 2.0, cacheRead: 0.2, output: 12.0 },
 };
+
+export interface TokenUse {
+  /** All input tokens, cache reads included. */
+  input: number;
+  cached: number;
+  /** Output, thinking included. */
+  output: number;
+}
 /** A high exchange rate, so the rupee cap is reached early rather than late. */
 export const INR_PER_USD = 90;
 const SPEND_FILE = path.join(path.resolve(__dirname, '../..'), 'out', 'spend.json');
 const SPEND_CAP_INR = Number(process.env['FORGELENS_SPEND_CAP_INR'] ?? 150);
 
-export function estimateCostUsd(model: string, tokensIn: number, tokensOut: number, reasoning: number): number {
+export function estimateCostUsd(model: string, use: TokenUse): number {
   const price = PRICES[model];
-  return price ? (tokensIn * price.input + (tokensOut + reasoning) * price.output) / 1_000_000 : 0;
+  if (!price) return 0;
+  const cached = Math.min(use.cached, use.input);
+  return ((use.input - cached) * price.input + cached * price.cacheRead + use.output * price.output) / 1_000_000;
 }
 
 export function spentInr(): number {
@@ -142,7 +154,9 @@ export interface RunRecord {
   /** Set when the cost guard stopped the run. */
   stoppedForCost: boolean;
   /** Tokens of each model request, in order, with the thread it came from. */
-  perRequest: { thread: string; input: number; output: number; cached: number }[];
+  perRequest: { thread: string; model: string; input: number; output: number; cached: number }[];
+  /** Cache reads over the whole run, part of tokensIn. */
+  tokensCached: number;
   status: string;
   error: string | undefined;
   sessionUrl: string | undefined;
@@ -202,7 +216,9 @@ export async function startHarness(
   let stoppedForCost = false;
   let primary = model;
   let liveCostUsd = 0;
-  const perRequest: { thread: string; input: number; output: number; cached: number }[] = [];
+  const perRequest: { thread: string; model: string; input: number; output: number; cached: number }[] = [];
+  /** The model each message came from: the shell names it, the delta with the usage does not. */
+  const messageModel = new Map<string, string>();
   const usageIndex = new Map<string, number>();
   let noticeCount = 0;
   const port = new NodeEditorPort(workspace);
@@ -222,7 +238,7 @@ export async function startHarness(
   let tokensIn = 0;
   let tokensOut = 0;
   let costUsd = 0;
-  let reasoningTokens = 0;
+  let tokensCached = 0;
   const messageIds = new Set<string>();
 
   const flow: ReviewFlow = new ReviewFlow(port, { onCard: (card) => controller.updateReview(card), onWarning: log });
@@ -300,6 +316,7 @@ export async function startHarness(
       runner.cancelAll();
     },
     onEvent: (event) => {
+      if (event.type === 'model.message' && event.model?.name) messageModel.set(event.id, event.model.name);
       if (event.type === 'model.message' && !messageIds.has(event.id)) {
         messageIds.add(event.id);
         requests += 1;
@@ -307,7 +324,7 @@ export async function startHarness(
       // Each message reports its tokens, so a runaway turn is caught while it runs, not after. The stream sends the
       // message as an empty shell and the usage in a later delta, so both are read, keyed by message id.
       if ((event.type === 'model.message' || event.type === 'model.message.delta') && event.usage) {
-        const request = { thread: event.threadId === 'main' ? 'main' : 'sub', input: event.usage.inputTokens ?? 0, output: event.usage.outputTokens ?? 0, cached: event.usage.cacheReadTokens ?? 0 };
+        const request = { thread: event.threadId === 'main' ? 'main' : 'sub', model: messageModel.get(event.id) ?? controller.activeModel ?? model, input: event.usage.inputTokens ?? 0, output: event.usage.outputTokens ?? 0, cached: event.usage.cacheReadTokens ?? 0 };
         const index = usageIndex.get(event.id);
         if (index === undefined) {
           usageIndex.set(event.id, perRequest.length);
@@ -315,7 +332,7 @@ export async function startHarness(
         } else {
           perRequest[index] = request;
         }
-        liveCostUsd = perRequest.reduce((sum, item) => sum + estimateCostUsd(controller.activeModel ?? model, item.input, item.output, 0), 0);
+        liveCostUsd = perRequest.reduce((sum, item) => sum + estimateCostUsd(item.model, item), 0);
         if (liveCostUsd > RUN_COST_GUARD_USD && !stoppedForCost) {
           stoppedForCost = true;
           log(`[cost guard] about Rs ${(liveCostUsd * INR_PER_USD).toFixed(2)} spent in this run, over the guard. Stopping.`);
@@ -326,7 +343,7 @@ export async function startHarness(
         const metrics = 'metrics' in event.state ? event.state.metrics : undefined;
         tokensIn += metrics?.totalInputTokens ?? 0;
         tokensOut += metrics?.totalOutputTokens ?? 0;
-        reasoningTokens += metrics?.totalReasoningTokens ?? 0;
+        tokensCached += metrics?.totalCacheReadTokens ?? 0;
         costUsd += metrics?.totalCostInUsd ?? 0;
       }
     },
@@ -366,7 +383,9 @@ export async function startHarness(
         requests,
         tokensIn,
         tokensOut,
-        costUsd: costUsd || estimateCostUsd(controller.activeModel ?? model, tokensIn, tokensOut, reasoningTokens),
+        tokensCached,
+        // Priced per request, by the model that answered it: a broken primary's failed requests cost nothing.
+        costUsd: costUsd || perRequest.reduce((sum, item) => sum + estimateCostUsd(item.model, item), 0),
         threads,
         tools: collectTools(view.items),
         files,
