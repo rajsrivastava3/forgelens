@@ -178,7 +178,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const controller = new AgentController({
     agentName: AGENT_NAME,
-    onUserRequest: () => mcp?.newTask(),
+    onTurnStart: () => mcp?.newTask(),
     baseUrl,
     sessions: () => testSessions?.api ?? sdk().sessions,
     createSession: async (agentName, model) => {

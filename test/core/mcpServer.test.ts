@@ -6,6 +6,7 @@ import {
   startEditorMcpServer,
   type RunningEditorMcpServer,
   type ToolCallRecord,
+  READ_LIMIT_MESSAGE,
 } from '../../src/core/mcp/server';
 
 const TOKEN = 'test-token';
@@ -132,24 +133,32 @@ describe('editor MCP server', () => {
   });
 });
 
-describe('reads since the last staged edit', () => {
+describe('read limit', () => {
   const text = (result: Awaited<ReturnType<Client['callTool']>>): string =>
     (result.content as { type: string; text: string }[]).map((part) => part.text).join('');
 
-  it('says it is time to stage after six, starts again on a staged edit, and on a new request', async () => {
+  it('refuses reads and searches after eight with nothing staged, until a stage_edit or a new turn', async () => {
     server.newTask();
     const client = await connect();
-    const read = async (): Promise<string> => text(await client.callTool({ name: 'read_file', arguments: { path: 'hello.py' } }));
-    for (let i = 0; i < 6; i += 1) expect(await read()).not.toContain('[ForgeLens:');
-    expect(await read()).toContain('[ForgeLens: 7 reads and searches since your last staged edit.');
+    const read = (): Promise<Awaited<ReturnType<Client['callTool']>>> => client.callTool({ name: 'read_file', arguments: { path: 'hello.py' } });
+    const search = (): Promise<Awaited<ReturnType<Client['callTool']>>> => client.callTool({ name: 'search_code', arguments: { query: 'hi' } });
+    for (let i = 0; i < 4; i += 1) expect((await read()).isError).toBeFalsy();
+    for (let i = 0; i < 4; i += 1) expect(text(await search())).not.toBe(READ_LIMIT_MESSAGE);
+    const refused = await read();
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toBe('Read limit reached. Stage your edits with stage_edit now; reads unlock after the next stage_edit.');
+    expect(text(await client.callTool({ name: 'find_symbol', arguments: { name: 'hi' } }))).toBe(READ_LIMIT_MESSAGE);
+    // Tools outside the limit still work.
+    expect(text(await client.callTool({ name: 'get_staged_changes', arguments: {} }))).not.toBe(READ_LIMIT_MESSAGE);
 
-    await client.callTool({ name: 'stage_edit', arguments: { path: 'hello.py', edits: [{ old_text: 'hi', new_text: 'hello' }] } });
-    expect(await read()).not.toContain('[ForgeLens:');
+    // Any staging attempt unlocks reads, even one whose edit does not match.
+    await client.callTool({ name: 'stage_edit', arguments: { path: 'hello.py', edits: [{ old_text: 'no such text', new_text: 'x' }] } });
+    expect(text(await read())).toContain('1: print("hi")');
 
-    for (let i = 0; i < 6; i += 1) await read();
-    expect(await read()).toContain('[ForgeLens:');
+    for (let i = 0; i < 7; i += 1) await read();
+    expect(text(await read())).toBe(READ_LIMIT_MESSAGE);
     server.newTask();
-    expect(await read()).not.toContain('[ForgeLens:');
+    expect(text(await read())).toContain('1: print("hi")');
     await client.close();
   });
 });

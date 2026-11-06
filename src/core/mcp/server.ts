@@ -51,7 +51,7 @@ export interface EditorMcpServerOptions {
 
 export interface RunningEditorMcpServer {
   url: string;
-  /** A new user request starts: the count of reads since the last staged edit starts again. */
+  /** A new turn starts: the count of reads since the last staged edit starts again. */
   newTask(): void;
   close(): Promise<void>;
 }
@@ -60,18 +60,13 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false } as const;
 /** Staging changes nothing on disk, but it is not read-only: it changes what apply_changes will propose. */
 const STAGING = { readOnlyHint: false, destructiveHint: false } as const;
 
-/** Tools that only gather. Past this many in a row with nothing staged, each result says it is time to stage. */
-const GATHER_TOOLS = new Set(['retrieve_context', 'repo_map', 'search_code', 'find_symbol', 'find_references', 'read_file', 'list_dir', 'get_diagnostics']);
-export const GATHER_NOTE_AFTER = 6;
-
-export function gatherNote(count: number): string {
-  return `
-
-[ForgeLens: ${count} reads and searches since your last staged edit. If this task is a change, you have enough: stage every edit now, in one message, and let the staged test run check what you are unsure of.]`;
-}
+/** Reads and searches. Past READ_LIMIT of them in a turn with nothing staged, they refuse until something is. */
+const CAPPED_TOOLS = new Set(['read_file', 'search_code', 'find_symbol', 'find_references', 'retrieve_context', 'repo_map']);
+export const READ_LIMIT = 8;
+export const READ_LIMIT_MESSAGE = 'Read limit reached. Stage your edits with stage_edit now; reads unlock after the next stage_edit.';
 
 interface ServerParts {
-  /** Reads and searches since the last staged edit or the last user request. Kept per server, not per request. */
+  /** Reads and searches since the last staged edit or the start of the turn. Kept per server, not per request. */
   gather: { count: number };
   flow: ReviewFlow;
   context: ContextEngine;
@@ -91,12 +86,17 @@ function buildMcpServer(options: EditorMcpServerOptions, parts: ServerParts): Mc
     const at = new Date().toISOString();
     // Trying to stage, even with an edit that does not match, means the gathering is over.
     if (tool.startsWith('stage_')) parts.gather.count = 0;
+    if (CAPPED_TOOLS.has(tool)) {
+      parts.gather.count += 1;
+      if (parts.gather.count > READ_LIMIT) {
+        options.onToolCall?.({ tool, args, at, ok: false });
+        return { content: [{ type: 'text' as const, text: READ_LIMIT_MESSAGE }], isError: true };
+      }
+    }
     try {
       const text = await execute();
       options.onToolCall?.({ tool, args, at, ok: true });
-      if (!GATHER_TOOLS.has(tool)) return { content: [{ type: 'text' as const, text }] };
-      parts.gather.count += 1;
-      return { content: [{ type: 'text' as const, text: parts.gather.count > GATHER_NOTE_AFTER ? text + gatherNote(parts.gather.count) : text }] };
+      return { content: [{ type: 'text' as const, text }] };
     } catch (error) {
       options.onToolCall?.({ tool, args, at, ok: false });
       const message = error instanceof Error ? error.message : String(error);
