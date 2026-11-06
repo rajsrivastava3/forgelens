@@ -172,16 +172,21 @@ describe('the fallback chain and sessions per model', () => {
 describe('agent mode is told to keep costs down', () => {
   const text = (agent as { manifest: { instructions: string } }).manifest.instructions;
 
-  it('trusts the pack, bounds the explorer, reads narrowly, stages in few calls, tests once, applies once', () => {
-    expect(text).toContain('Trust it.');
+  it('plans in one turn and implements in the next, reading narrowly and testing and applying once', () => {
+    expect(text).toContain('A change runs as two turns of this session.');
+    expect(text).toContain('Make at most 3 reads or searches, then reply with the plan and stop');
     expect(text).toContain('at most 4 tool calls');
     expect(text).toContain('at most 150 lines a call');
     expect(text).toContain('Never read a range you have already read');
     expect(text).toContain('one stage_edit per file, with several edits in it');
-    expect(text).toContain('make all of them in the same message');
-    expect(text).toContain('Plan and gather, in one message');
     expect(text).toContain('Call run_command once with target "staged"');
     expect(text).toContain('Call apply_changes once');
+    expect(text).toContain('make all of them in the same message');
+  });
+
+  it('states the read limit and asks for defensive code over research', () => {
+    expect(text).toContain('stop working after 8 in a turn with nothing staged');
+    expect(text).toContain('Do not research library internals or edge cases before staging.');
   });
 
   it('has a short iteration limit and names no file of any repository', () => {
