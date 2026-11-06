@@ -138,6 +138,43 @@ about 30 reads, the main agent re-read most of them, and it never staged an edit
 `run_command`, which needs approval. The instructions then bounded the explorer and kept `run_command` for tests. The runs below
 followed.
 
+**Reasoning effort `low` (7 November IST), the default since.** `model.params.reasoning_effort` goes to the
+saved agents and to fallback sessions (`forgelens.reasoningEffort`). Low passed on the first try, so medium was not
+needed.
+
+| Run | Effort | Result | To diff | Total | Requests | Input tokens (cache reads) | Output | Cost |
+|---|---|---|---|---|---|---|---|---|
+| Task A, earlier (4 runs) | default | 4 pass | 23 to 35 s | | 3 | about 13,500 | about 2,900 | Rs 1.45 to 1.76 |
+| Task A | low | pass | 5.9 s | 8.3 s | 3 | 8,509 | 337 | Rs 0.69 |
+| Task B, earlier (2 runs) | default | 2 pass | | 154 to 181 s | 15 to 20 | 262,792 to 392,948 | 7,648 to 10,834 | Rs 7.37 to 10.01 |
+| Task B 1 | low | pass, 3 files, 4 hunks | 62.6 s | 66.1 s | 16 | 177,061 (131,147) | 2,641 | Rs 4.88 |
+| Task B 2 | low | pass, 3 files, 4 hunks | 58.6 s | 62.8 s | 14 | 153,367 (109,812) | 2,424 | Rs 4.50 |
+
+Timeline of Task B run 2, from sending the instruction: Context Pack card at once, explorer thread from about 4 s,
+Plan card at 21.5 s, first staged edit at 39.4 s, staged pytest and the review open at 58.6 s. Both low runs used
+the explorer subagent in the plan turn (3 tool calls), staged once per file, ran pytest on the staged copy, and
+applied once. Sessions 01m6qwngp44thhmerc492devyd and 01m6qwsd0kt6hxbr4kdpwdkzkr; Task A 01m6qwmb70y0takcs5rd1ervvy.
+The Context Pack stays at 6k: it is under 10% of a request's input and saves the reads it replaces.
+
+**TrueForge context-engineering features in the session (B4 evidence).**
+
+| Feature | Where it shows in the TrueForge session | Event types | Session |
+|---|---|---|---|
+| Subagent | The plan turn's `create_sub_agent` call, then a thread named explorer with its own 3 tool calls; nested under the turn in the panel too | `model.message` with tool `create_sub_agent` (type `truefoundry-system`), `thread.created`, `model.message` and `tool.response` with that `thread_id`, `thread.done` | 01m6qwsd0kt6hxbr4kdpwdkzkr |
+| Deferred tool loading | 5 tools preloaded; 9 deferred, reached through `list_tools`, `get_tool_info` and `call_tool`. Each request's `input_tokens_breakdown.tool_definitions` is about 880 tokens instead of about 2,100 | `model.message` with tools `list_tools` and `get_tool_info` (type `truefoundry-system`) | 01m6pv434vq69y6gzt3tmef52z (agent loaded `run_command`) |
+| Tool approval drives the review | `apply_changes` and `run_command` are gated by name; the approval opens the hunk review, or is answered from the safe list | `tool.approval_required`, then a turn whose input is `user.tool_approval` | 01m6qwsd0kt6hxbr4kdpwdkzkr |
+| Compaction | Configured at 75,000 input tokens (`context_management.compaction`), and the panel shows its notice (scripted e2e). It does not fire in a normal Task B run | `thread.context_compaction_started`, `thread.context_compaction_finished` | not in a live run |
+
+In the two low-effort runs the explorer read files with the preloaded `read_file`, so no deferred tool was needed and
+`list_tools` does not appear there. Deferred loading still shapes every request, through the smaller tool list.
+
+Compaction was not moved down to about 30k, on purpose. The largest request in a low-effort Task B run is about
+17k input tokens, so a 30k trigger would never fire. A trigger low enough to fire would replace the history with a
+summary in the middle of the implement turn, which is where the agent needs the exact text it read for
+`stage_edit`'s `old_text`, and it would break the prompt cache, which already serves about 70% to 80% of input
+at a tenth of the price. It would cost a summary request and save little. It stays at 75k, as a guard for long
+conversations.
+
 **Task B with plan, then implement (7 November IST): 2 of 2 passed on `google-gemini/gemini-3-8-flash`.**
 
 | Run | Plan turn | Implement turn | Requests | Input tokens (cache reads) | Output | Cost | Time | Files, hunks | Staged pytest |
