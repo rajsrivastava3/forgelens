@@ -151,6 +151,11 @@ the same session, with its turns, threads and tool calls.
 
 **Task C, resilience.** Task A again, with a broken primary model. See [Recording Task C](#recording-task-c).
 
+Before each take, `.scriptsdemo-prep.ps1` checks that TrueForge is up (and starts it if not), resets the `flask`
+folder, shows the models and reasoning effort ForgeLens will use, checks that `broken-primary` exists but is not the
+primary, shows free RAM and disk, and prints READY. After Task C, `.scriptsdemo-prep.ps1 -AfterTaskC` puts the real
+primary back first in `forgelens.models`.
+
 ## How the agent chooses what to read
 
 The strategy is budgeted multi-signal retrieval. ForgeLens indexes the workspace in the background, in small slices
