@@ -156,17 +156,17 @@ the explorer subagent in the plan turn (3 tool calls), staged once per file, ran
 applied once. Sessions 01m6qwngp44thhmerc492devyd and 01m6qwsd0kt6hxbr4kdpwdkzkr; Task A 01m6qwmb70y0takcs5rd1ervvy.
 The Context Pack stays at 6k: it is under 10% of a request's input and saves the reads it replaces.
 
-**TrueForge context-engineering features in the session (B4 evidence).**
+**TrueForge context-engineering features in the session (B4 evidence).** All in one passing Task B run (low effort,
+70.9 s, 15 requests, Rs 4.69, 3 files, 5 hunks, 57 tests pass): session 01m6r1qcx0s4pp2eqjdyce5tav, at
+http://localhost:8790/sessions/01m6r1qcx0s4pp2eqjdyce5tav. Times are from the start of the first turn.
 
-| Feature | Where it shows in the TrueForge session | Event types | Session |
-|---|---|---|---|
-| Subagent | The plan turn's `create_sub_agent` call, then a thread named explorer with its own 3 tool calls; nested under the turn in the panel too | `model.message` with tool `create_sub_agent` (type `truefoundry-system`), `thread.created`, `model.message` and `tool.response` with that `thread_id`, `thread.done` | 01m6qwsd0kt6hxbr4kdpwdkzkr |
-| Deferred tool loading | 5 tools preloaded; 9 deferred, reached through `list_tools`, `get_tool_info` and `call_tool`. Each request's `input_tokens_breakdown.tool_definitions` is about 880 tokens instead of about 2,100 | `model.message` with tools `list_tools` and `get_tool_info` (type `truefoundry-system`) | 01m6pv434vq69y6gzt3tmef52z (agent loaded `run_command`) |
-| Tool approval drives the review | `apply_changes` and `run_command` are gated by name; the approval opens the hunk review, or is answered from the safe list | `tool.approval_required`, then a turn whose input is `user.tool_approval` | 01m6qwsd0kt6hxbr4kdpwdkzkr |
-| Compaction | Configured at 75,000 input tokens (`context_management.compaction`), and the panel shows its notice (scripted e2e). It does not fire in a normal Task B run | `thread.context_compaction_started`, `thread.context_compaction_finished` | not in a live run |
-
-In the two low-effort runs the explorer read files with the preloaded `read_file`, so no deferred tool was needed and
-`list_tools` does not appear there. Deferred loading still shapes every request, through the smaller tool list.
+| Feature | What to point at | Event types |
+|---|---|---|
+| Subagent | 4.4 s: the main agent calls `create_sub_agent`; a thread named explorer runs until 16.6 s and returns file:line targets; the plan follows at 20.6 s | `model.message` with tool `create_sub_agent` (`truefoundry-system`), `thread.created`, messages with the explorer's `thread_id`, `thread.done` |
+| Deferred tool loading | 6.9 s: the explorer calls `get_tool_info` for `search_code`, which is not preloaded; 8.9, 11.2 and 13.5 s: it calls `call_tool` with `tool_name: search_code`. 5 tools are preloaded, 9 deferred; each request's `input_tokens_breakdown.tool_definitions` is about 880 tokens instead of about 2,100 | `model.message` with tools `get_tool_info` and `call_tool` (`truefoundry-system`), each followed by `tool.response` |
+| Tool approval drives the review | The staged pytest (`run_command`, answered from the safe list) and `apply_changes`, whose approval opens the hunk review | `tool.approval_required`, then a turn whose input is `user.tool_approval` |
+| Two turns, one session | Turn 1 ends with the plan (`turn.done` at 20.6 s); turn 2, the implementation, starts at once in the same session | `turn.created`, `turn.done` |
+| Compaction | Configured at 75,000 input tokens (`context_management.compaction`); the panel shows its notice (scripted e2e). It does not fire in a normal Task B run | `thread.context_compaction_started`, `thread.context_compaction_finished` |
 
 Compaction was not moved down to about 30k, on purpose. The largest request in a low-effort Task B run is about
 17k input tokens, so a 30k trigger would never fire. A trigger low enough to fire would replace the history with a

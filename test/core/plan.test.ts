@@ -48,7 +48,7 @@ describe('parsePlan', () => {
     expect(PLAN_RULE).toContain('start with the line "Plan:"');
     expect(PLAN_RULE).toContain('- <path>: <the exact functions or lines you will change or add>. Why: <one line>');
     expect(PLAN_RULE).toContain('call create_sub_agent once to start an explorer');
-    expect(PLAN_RULE).toContain('use at most 3 tool calls');
+    expect(PLAN_RULE).toContain('use search_code for its lookups, at most 3 searches');
     expect(PLAN_READ_LIMIT).toBe(3);
     expect(IMPLEMENT_MESSAGE).toBe(
       'Implement your plan now. Stage all edits with as few stage_edit calls as possible, run the tests once with run_command target=staged, fix only what fails, then call apply_changes once.',
