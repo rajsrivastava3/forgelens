@@ -155,6 +155,8 @@ export interface RunRecord {
   stoppedForCost: boolean;
   /** Tokens of each model request, in order, with the thread it came from. */
   perRequest: { thread: string; model: string; input: number; output: number; cached: number }[];
+  /** The plan the first turn ended with, as the panel shows it. Empty when there was none. */
+  plan: { path: string; what: string; why: string }[];
   /** Cache reads over the whole run, part of tokensIn. */
   tokensCached: number;
   status: string;
@@ -267,7 +269,7 @@ export async function startHarness(
   const scripted = sessionsOverride?.(callTool);
   const controller: AgentController = new AgentController({
     agentName: 'forgelens-agent',
-    onUserRequest: () => mcp.newTask(),
+    onTurnStart: () => mcp.newTask(),
     baseUrl: () => BASE_URL,
     sessions: () => scripted ?? client.sessions,
     createSession: async (agentName, sessionModel) => {
@@ -387,6 +389,7 @@ export async function startHarness(
         // Priced per request, by the model that answered it: a broken primary's failed requests cost nothing.
         costUsd: costUsd || perRequest.reduce((sum, item) => sum + estimateCostUsd(item.model, item), 0),
         threads,
+        plan: view.items.flatMap((item) => (item.kind === 'plan' ? item.steps : [])),
         tools: collectTools(view.items),
         files,
         hunks,
