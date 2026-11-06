@@ -1179,7 +1179,7 @@ async function scenarioAgentFlow(): Promise<void> {
           const summary = await read('.context-summary');
           const onScreen = await vscode.commands.executeCommand<boolean>('forgelens.internal.inView', '.context-summary');
           check(summary.clicked && onScreen, 'the card heading is on screen, not scrolled away');
-          check(/^Context chosen: \d+ files, [\d.]+k? \/ 12k tokens$/.test(summary.statusText), 'the card summary: ' + summary.statusText);
+          check(/^Context chosen: \d+ files, [\d.]+k? \/ 6k tokens$/.test(summary.statusText), 'the card summary: ' + summary.statusText);
           const rows = await read('.context-items');
           check(rows.clicked, 'the reasons show without expanding anything');
           check(rows.statusText.includes('src/flask/cli.py') && rows.statusText.includes('tests/test_cli.py') && rows.statusText.includes('docs/cli.rst'), 'the three files are listed');
@@ -1243,7 +1243,7 @@ async function scenarioAgentFlow(): Promise<void> {
 
   check(prompt.startsWith('## Context Pack:'), 'the pack goes first');
   check(prompt.includes('| File | Why | Tokens | Shown as |'), 'the pack has its table');
-  check(prompt.endsWith('## Request\n' + TASK_B_INSTRUCTION), 'the request follows, word for word');
+  check(prompt.includes('## Request\n' + TASK_B_INSTRUCTION + '\n\n## How to answer'), 'the request follows, word for word, then the plan rule');
   const shown = shownAtReview.items.find((item) => item.kind === 'user');
   check(shown?.kind === 'user' && shown.text === TASK_B_INSTRUCTION, 'the panel shows only what was typed');
 
@@ -1258,6 +1258,58 @@ async function scenarioAgentFlow(): Promise<void> {
   report['stagedRun'] = command?.result?.trim().split('\n').at(-1);
   await undoToClean();
   results['agentFlow'] = report;
+}
+
+/** Plan, then implement: the explorer thread, then the Plan card, then the second turn in the same session. */
+async function scenarioPlanCard(): Promise<void> {
+  const report: Record<string, unknown> = {};
+  const prompts: string[] = [];
+  await useScriptSteps(
+    [
+      {
+        kind: 'thread',
+        title: 'explorer',
+        tools: [
+          { name: 'search_code', args: { query: 'add_command' } },
+          { name: 'read_file', args: { path: 'tests/test_cli.py', start_line: 1, end_line: 20 } },
+          { name: 'read_file', args: { path: 'docs/cli.rst', start_line: 1, end_line: 20 } },
+        ],
+        answer: 'Targets: the command registration in the CLI module, its test module, and the CLI docs page.',
+      },
+      {
+        kind: 'text',
+        text: [
+          'Plan:',
+          '- src/flask/cli.py: add the new command next to the other built-in commands and register it. Why: built-in commands are defined and registered here.',
+          '- tests/test_cli.py: add a test for the command. Why: the request asks for test coverage.',
+          '- docs/cli.rst: add a section beside the other built-in commands. Why: the request asks for docs there.',
+        ].join('\n'),
+      },
+      {
+        kind: 'hook',
+        run: async () => {
+          await sleep(600);
+          await shot('p6-1-plan-card');
+          const plan = await read('.plan-card .context-summary');
+          check(plan.clicked && plan.statusText === 'Plan: 3 files, implementing next', 'the plan card heading: ' + plan.statusText);
+          const rows = await read('.plan-card .context-items');
+          check(rows.statusText.includes('src/flask/cli.py') && rows.statusText.includes('Why: the request asks for test coverage.'), 'the plan rows show what and why');
+          const thread = await read('.thread-summary');
+          check(thread.clicked && thread.statusText.includes('explorer'), 'the explorer thread shows: ' + thread.statusText);
+          await shot('p6-2-explorer-thread');
+          report['plan'] = plan.statusText;
+          report['thread'] = thread.statusText;
+        },
+      },
+      { kind: 'text', text: 'Scripted: the implementation would follow here.' },
+    ],
+    (text) => prompts.push(text),
+  );
+  await vscode.commands.executeCommand('forgelens.ask', TASK_B_INSTRUCTION);
+  await waitFor('the request to end', async () => (await state()).view.status === 'done', 30_000);
+  check(prompts.length === 2, 'two turns were sent: ' + String(prompts.length));
+  check(prompts[1] === 'Implement your plan now. Stage all edits with as few stage_edit calls as possible, run the tests once with run_command target=staged, fix only what fails, then call apply_changes once.', 'the second turn is the implement step');
+  results['planCard'] = report;
 }
 
 /** A command off the safe list still asks. */
@@ -1424,6 +1476,7 @@ export async function run(): Promise<void> {
       'inline-cancel': scenarioInlineCancel,
       'inline-mentions': scenarioInlineMentions,
       'agent-flow': scenarioAgentFlow,
+      'plan-card': scenarioPlanCard,
       'command-asks': scenarioCommandAsks,
       'panel-mentions': scenarioPanelMentions,
       'fallback-banner': scenarioFallbackBanner,

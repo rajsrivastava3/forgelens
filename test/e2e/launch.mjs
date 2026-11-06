@@ -69,7 +69,7 @@ const env = {
   FORGELENS_E2E: '1',
   FORGELENS_E2E_ROOT: root,
   FORGELENS_E2E_WORKSPACE: workspace,
-  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'review,reject,stop-review,stop-staging,drift,crlf,create-delete,ctrl-z,keybindings,inline,inline-fallback,inline-cancel,inline-mentions,agent-flow,command-asks,panel-mentions,fallback-banner',
+  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'review,reject,stop-review,stop-staging,drift,crlf,create-delete,ctrl-z,keybindings,inline,inline-fallback,inline-cancel,inline-mentions,agent-flow,plan-card,command-asks,panel-mentions,fallback-banner',
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
