@@ -1332,6 +1332,26 @@ async function scenarioPlanCard(): Promise<void> {
   results['planCard'] = report;
 }
 
+/** "Open session in TrueForge" opens the session beside the editor, in the Simple Browser. */
+async function scenarioSessionView(): Promise<void> {
+  const browserTabs = (): vscode.Tab[] =>
+    vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter((tab) => (tab.input instanceof vscode.TabInputWebview && /simpleBrowser/i.test(tab.input.viewType)) || tab.label === 'TrueForge');
+  // A real session, from a passing Task B run, opened the way the panel's link opens it. A scripted run has no
+  // session in TrueForge, so the link stays hidden there.
+  const url = process.env['FORGELENS_E2E_SESSION_URL'];
+  check(Boolean(url), 'FORGELENS_E2E_SESSION_URL names a real session');
+  if (url) {
+    await vscode.commands.executeCommand('forgelens.internal.openSession', url);
+    // The tab reports no input type VS Code knows, so its title is what identifies it, and it takes a moment to appear.
+    await sleep(3000);
+    await waitFor('the session page in a Simple Browser tab', () => browserTabs().length > 0, 10_000);
+    await sleep(9000);
+    await shot('p7-1-session-in-simple-browser');
+    results['sessionView'] = { url, tabs: browserTabs().map((tab) => tab.label) };
+  }
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+}
+
 /** A command off the safe list still asks. */
 async function scenarioCommandAsks(): Promise<void> {
   await useScriptSteps([
@@ -1497,6 +1517,7 @@ export async function run(): Promise<void> {
       'inline-mentions': scenarioInlineMentions,
       'agent-flow': scenarioAgentFlow,
       'plan-card': scenarioPlanCard,
+      'session-view': scenarioSessionView,
       'command-asks': scenarioCommandAsks,
       'panel-mentions': scenarioPanelMentions,
       'fallback-banner': scenarioFallbackBanner,

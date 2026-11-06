@@ -252,6 +252,21 @@ export function activate(context: vscode.ExtensionContext): void {
     banner,
   });
 
+  /** The TrueForge session page, beside the editor by default, so one window shows both. */
+  const openSession = async (url: string): Promise<void> => {
+    const uri = vscode.Uri.parse(url);
+    if (config().get<string>('openSessionIn', 'simpleBrowser') === 'external') {
+      await vscode.env.openExternal(uri);
+      return;
+    }
+    try {
+      await vscode.commands.executeCommand('simpleBrowser.api.open', uri, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
+    } catch {
+      // The Simple Browser extension can be disabled; the system browser always works.
+      await vscode.env.openExternal(uri);
+    }
+  };
+
   const panel = new AgentPanel(context.extensionUri, {
     getState,
     onSend: (text) => void sendToAgent(text),
@@ -260,7 +275,7 @@ export function activate(context: vscode.ExtensionContext): void {
     onNewChat: () => controller.newChat(),
     onOpenSession: () => {
       const url = controller.view.sessionUrl;
-      if (url) void vscode.env.openExternal(vscode.Uri.parse(url));
+      if (url) void openSession(url);
     },
     onSetup: () => void vscode.commands.executeCommand('forgelens.setup'),
     onReviewOpen: () => void vscode.commands.executeCommand('forgelens.review.open'),
@@ -377,6 +392,7 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.commands.registerCommand('forgelens.internal.inView', (selector: string) => panel.inViewForTest(selector)),
       vscode.commands.registerCommand('forgelens.internal.type', (text: string) => panel.typeForTest(text)),
       vscode.commands.registerCommand('forgelens.internal.mcp', () => ({ url: mcp?.url, token: mcpToken })),
+      vscode.commands.registerCommand('forgelens.internal.openSession', (url: string) => openSession(url)),
       vscode.commands.registerCommand('forgelens.internal.hunks', () =>
         flow.changeset.hunks.map((hunk) => ({ id: hunk.id, path: hunk.path, newStart: hunk.newStart, lines: hunk.lines, decision: flow.decisionOf(hunk.id) })),
       ),

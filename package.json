@@ -133,6 +133,19 @@
           "default": "http://localhost:8790",
           "description": "Where TrueForge is running."
         },
+        "forgelens.openSessionIn": {
+          "type": "string",
+          "enum": [
+            "simpleBrowser",
+            "external"
+          ],
+          "enumDescriptions": [
+            "VS Code's Simple Browser, beside the editor",
+            "The system browser"
+          ],
+          "default": "simpleBrowser",
+          "description": "Where \"Open session in TrueForge\" opens the session page."
+        },
         "forgelens.models": {
           "type": "array",
           "items": {
