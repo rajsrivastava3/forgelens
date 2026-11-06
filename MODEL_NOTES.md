@@ -129,43 +129,60 @@ Tested: gemini-3-8-flash, gemini-flash-lite-latest, gemini-3-1-flash-lite, gemin
 ## 6 November: paid primary, free fallback
 
 **Primary `google-gemini/gemini-3-8-flash` (paid, prepay).** Exact Task A, live, after one fix to the inline agent's
-instructions: 4 of 4 passed, each 3 requests, 23 to 35 s from instruction to diff, about Rs 2.50 to 2.90 each. Before
+instructions: 4 of 4 passed, each 3 requests, 23 to 35 s from instruction to diff, about Rs 1.45 to 1.76 each (corrected formula). Before
 the fix, 3 of 3 failed: the model spent all 15 steps searching for docstring conventions and never staged an edit
-(about Rs 8.70 each).
+(about Rs 4.40 each).
 
-**Task B, one live run: no result, about Rs 123.** 1,663,659 input tokens in one turn. The explorer subagent made
+**Task B, one live run: no result, about Rs 31 (first estimated at Rs 123).** 1,663,659 input tokens in one turn, 1,442,672 of them cache reads. The explorer subagent made
 about 30 reads, the main agent re-read most of them, and it never staged an edit before trying out code with
 `run_command`, which needs approval. The instructions then bounded the explorer and kept `run_command` for tests. The runs below
 followed.
 
-**Task B after cutting cost (6 November): 3 live runs, 0 passed, about Rs 77 including probes.** Changes before
+**Task B with plan, then implement (7 November IST): 2 of 2 passed on `google-gemini/gemini-3-8-flash`.**
+
+| Run | Plan turn | Implement turn | Requests | Input tokens (cache reads) | Output | Cost | Time | Files, hunks | Staged pytest |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 3 searches, 2 requests | 9th read refused by the limit, then staged | 20 | 392,948 (332,065) | 10,834 | Rs 10.01 | 181 s | 4 files, 7 hunks | yes, auto-approved |
+| 2 | 1 read, 2 searches, 2 requests | 9th read refused by the limit, then staged | 15 | 262,792 (213,169) | 7,648 | Rs 7.37 | 154 s | 4 files, 6 hunks | yes, auto-approved |
+
+Both plans named `src/flask/cli.py` (the command, registered in `FlaskGroup.__init__`), `tests/test_cli.py`,
+`docs/cli.rst` and `CHANGES.rst`, each with a reason. After accepting: `pytest tests/test_cli.py -q` gives 57
+passed, `flask --help` lists config, and `flask config` prints JSON with SECRET_KEY, DATABASE_PASSWORD, API_TOKEN
+and SIGNING_KEY as "***" and NORMAL_SETTING visible. Sessions 01m6qtrkdr3yyhbharrp9f7ba6 and
+01m6qtzfw2xk64mtp70q74c8nt. A Task B take costs about Rs 7 to 10.
+
+**Task B after cutting cost (6 November): 3 live runs, 0 passed.** Changes before
 them: a 6k Context Pack with use sites and outlines, read_file capped at 150 lines, an iteration limit of 25, and
 instructions to plan once, stage in few calls, test once and apply once. Each run was stopped before staging:
 
 | Run | Requests | Input tokens (cache reads) | Estimate | What the agent did |
 |---|---|---|---|---|
-| 1 | 25 | 372,455 (most cached) | Rs 29.52 | One call per message: 2 to find run_command, then 23 small searches and reads. Hit the iteration limit. The cost guard did not fire: it read usage from the empty message shell, not the delta that carries it. Fixed. |
-| 2 | 16 | 252,136 (200,540) | Rs 22.77 | Batched 4 searches once, then 9 requests on how config values serialise to JSON. Stopped by the Rs 20 guard. |
-| 3 | 14 | 263,480 (216,251) | Rs 24.49 | Wrote a plan and made 5 reads in its first message, as now instructed, and 2 in the next. Then 11 one-call requests on JSON serialisation and the changelog layout, ignoring a note on each result that it had enough to stage. Its last two messages had 3.6k and 2.6k output tokens, likely the edit, when the guard stopped it. |
+| 1 | 25 | 372,455 (304,684) | Rs 8.95 | One call per message: 2 to find run_command, then 23 small searches and reads. Hit the iteration limit. The cost guard did not fire: it read usage from the empty message shell, not the delta that carries it. Fixed. |
+| 2 | 16 | 252,136 (200,540) | Rs 7.82 | Batched 4 searches once, then 9 requests on how config values serialise to JSON. Stopped by the cost guard. |
+| 3 | 14 | 263,480 (216,251) | Rs 8.17 | Wrote a plan and made 5 reads in its first message, as now instructed, and 2 in the next. Then 11 one-call requests on JSON serialisation and the changelog layout, ignoring a note on each result that it had enough to stage. Its last two messages had 3.6k and 2.6k output tokens, likely the edit, when the cost guard stopped it. |
 
 A probe showed gemini-3-8-flash makes several tool calls in one message when asked (2 requests for 2 reads).
 Each request carries the whole conversation (9k tokens at the start, 28k by request 14), so the request count is
-what costs. About 80% of input tokens were cache reads, which the estimate prices at the full input rate, so real
-spend is lower than shown. Google's billing report has the real figure.
+what costs. About 80% of input tokens were cache reads. The costs in these tables use the corrected formula below.
 
 **Task C (6 November), both modes pass, fallback `google-gemini/gemini-3-8-flash`.** Invalid key: the custom
 provider answers with a bare 400, the banner says "request rejected (400), possibly an invalid key", the fallback
-finishes the edit in 36 s and 4 requests (about Rs 4.37). Unreachable endpoint: two retries (1 s, 3 s), then the
-fallback finishes in 25 s and 6 requests (about Rs 2.52). Both: `git status` empty at the switch, every Task A check
+finishes the edit in 36 s and 4 requests (about Rs 2.50). Unreachable endpoint: two retries (1 s, 3 s), then the
+fallback finishes in 25 s and 6 requests (about Rs 1.45). Both: `git status` empty at the switch, every Task A check
 passes after accepting, only `src/flask/helpers.py` changed.
 
 **`gemini-free/gemma-4-31b-it` (custom provider, free key), 6 November: one tool round trip fails.** read_file ran
 once, then the turn failed with "Response stream ended without a finish reason" after 4 requests and 84 s, and the
 answer held raw `<thought>` text. Removed from the provider and not used as a fallback.
 
-TrueForge reports no cost for these models, so cost is worked out from tokens at Google's published paid prices
-($0.75 per million input tokens, $3.75 per million output, including thinking, for both 3.8 Flash and 3.6 Flash,
-to 31 December 2026), at Rs 90 to the dollar, counting reasoning tokens again on top of output. The estimate runs high.
+TrueForge reports no cost for these models, so cost is worked out from tokens at Google's paid prices
+(aistudio.google.com/docs/pricing, checked 7 November): for 3.8 Flash and 3.6 Flash, $0.75 per million input tokens,
+$0.075 per million cache reads and $3.75 per million output tokens, thinking included, to 31 December 2026; for
+3.1 Pro Preview, $2.00, $0.20 and $12.00 for prompts up to 200k tokens. TrueForge's input count includes cache reads,
+and its output count includes thinking. Rs 90 to the dollar. An earlier formula priced cache reads at the input rate
+and added thinking twice, which made estimates about 3x too high. `scripts/spend-report.ts` re-prices every kept
+session with the corrected formula: Rs 83.43 for the sessions up to 6 November, against Rs 85.02 on the AI Studio
+spend page.
 
 **Fallback `gemini-free/gemini-flash-lite-latest` (custom OpenAI-compatible provider, free key).** A plain request
 works. Tool calls fail on the second request with `400: Bad Request`. The native `google-gemini` provider stores

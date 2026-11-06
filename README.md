@@ -26,6 +26,24 @@ weak stays only with a strong link to one of the two best hits. The panel shows 
 X / 6k tokens", with the reason for each file. Type `@` in the panel to add a file or symbol.
 `npx tsx scripts/show-pack.ts <repo> "<request>"` prints the pack for a request.
 
+## Plan, then implement
+
+A change in agent mode runs as two turns of one TrueForge session. The first carries the Context Pack and the
+request, and asks for a plan: at most 3 reads or searches, then one line per file, naming the functions or lines to
+change and why. The panel shows it as a Plan card. ForgeLens then sends the second turn, in the same session:
+implement the plan, stage in as few calls as possible, run the tests once on the staged copy, apply once. A question
+gets a plain answer and no second turn.
+
+This is a design decision, not a second agent loop. The agent still decides what to read and what to change;
+ForgeLens only splits the turn, so the plan is on screen before any edit, and the edits follow it. Without the split,
+the model kept researching edge cases and never staged (three paid runs, none reached a diff). With it, two runs in
+a row passed. If the second turn fails over to the fallback model, the new session gets the request, the plan and
+the step together.
+
+Reads are also capped. After 8 reads or searches in a turn with nothing staged, `read_file`, `search_code`,
+`find_symbol`, `find_references`, `retrieve_context` and `repo_map` answer "Read limit reached. Stage your
+edits with stage_edit now; reads unlock after the next stage_edit." Any staging attempt or a new turn unlocks them.
+
 ## Running tests before review
 
 `run_command` with target `staged` runs in a private copy of the workspace with the staged edits applied, kept in
