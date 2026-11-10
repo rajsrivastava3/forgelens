@@ -156,6 +156,23 @@ the explorer subagent in the plan turn (3 tool calls), staged once per file, ran
 applied once. Sessions 01m6qwngp44thhmerc492devyd and 01m6qwsd0kt6hxbr4kdpwdkzkr; Task A 01m6qwmb70y0takcs5rd1ervvy.
 The Context Pack stays at 6k: it is under 10% of a request's input and saves the reads it replaces.
 
+**Task A on a second model, `google-gemini/gemini-3-6-flash` at the default reasoning effort (10 November): pass.** One
+run, to check the inline instructions are not tuned to one model: 67.9 s total, 4 requests, about Rs 1.88, every
+Task A check passed. The first attempt produced no output within the 45 s first-token timeout (the model thinks
+longer at its default effort), so ForgeLens cancelled it and retried the same model in a fresh session, which
+answered in 22 s: stage_edit, apply_changes, one sentence. Sessions 01m730fb4rm7wh35chxanr7e5r (timed out) and
+01m730gr1kkpby86qbgxps3sxk. At effort low the same task takes 6 to 9 s, so low stays the default.
+
+**Inline edit with models that misbehave (scripted, no model, in a real VS Code window, 10 November).** Each ends
+in a reviewable diff or a clear message, never a half state: a model that answers with a code block instead of
+calling tools (the block is staged and reviewed, the card says so); one that edits outside the selection too (both
+hunks show, the stray one is rejected, only the selection lands: "Applied 1/2 hunks in 1 file"); one that stages
+and stops without apply_changes (ForgeLens opens the review and says why); one that sends malformed tool
+arguments, then an edit that matches nothing, then gives up (both calls show as errors on their cards, the run ends
+with "The model did not propose a change", nothing staged, git clean). Scenarios inline-fallback and inline-robust
+in test/e2e/run.ts; screenshots p7-3 and p7-4. Stop after something is staged discards it and the panel says
+"Cancelled, workspace unchanged" (scenario stop-staging, screenshot p7-2).
+
 **TrueForge context-engineering features in the session (B4 evidence).** All in one passing Task B run (low effort,
 70.9 s, 15 requests, Rs 4.69, 3 files, 5 hunks, 57 tests pass): session 01m6r1qcx0s4pp2eqjdyce5tav, at
 http://localhost:8790/sessions/01m6r1qcx0s4pp2eqjdyce5tav. Times are from the start of the first turn.
