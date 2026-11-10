@@ -516,9 +516,12 @@ async function scenarioStopStaging(): Promise<void> {
   await shot('p2-6-model-wait-heartbeat');
   await click('#stop');
   await running;
+  await sleep(400);
+  await shot('p7-2-stop-discards-staged');
   const { view } = await state();
   check(/Waiting for the model… [2-9] s/.test(waiting), 'the wait count ticks: ' + waiting);
   check(view.status === 'cancelled', 'cancelled: ' + view.status);
+  check(view.statusText === 'Cancelled, workspace unchanged', 'the panel says so: ' + view.statusText);
   check((await hunks()).length === 0, 'staged edits were discarded');
   check(!(await callMcpTool('read_file', { path: HELPERS, start_line: 28, end_line: 28 })).includes('Comment one'), 'reads no longer see the discarded edit');
   check((await gitStatus()) === '', 'git is clean after Stop during staging');
@@ -1169,7 +1172,13 @@ const TASK_B_INSTRUCTION =
 const read = (selector: string): Thenable<{ clicked: boolean; statusText: string }> => vscode.commands.executeCommand('forgelens.internal.read', selector);
 
 async function useScriptSteps(steps: ScriptStep[], onPrompt?: (prompt: string) => void): Promise<void> {
-  const inner = scriptedRehearsalSessions(steps, callMcpTool);
+  // A failed call reaches the scripted model as text, the way TrueForge passes it on: our server's own errors start
+  // with "Error:", and a protocol-level refusal comes as {"error": ...}.
+  const asModelSees = (name: string, error: unknown): string => {
+    const text = (error instanceof Error ? error.message : String(error)).replace(name + ' failed: ', '');
+    return text.startsWith('Error:') ? text : JSON.stringify({ error: text });
+  };
+  const inner = scriptedRehearsalSessions(steps, (name, args) => callMcpTool(name, args).catch((error: unknown) => asModelSees(name, error)));
   const api: SessionsApi = {
     createTurnStream: (id, request, options) => {
       const first = request.input[0];
@@ -1352,6 +1361,77 @@ async function scenarioSessionView(): Promise<void> {
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 }
 
+/** Inline edit with models that misbehave: each ends in a reviewable diff or a clear message, never a half state. */
+async function scenarioInlineRobust(): Promise<void> {
+  const report: Record<string, unknown> = {};
+  const original = onDisk(HELPERS);
+  const outside = { old_text: "What to return if the env var isn't set.", new_text: "What to return if the env var isn't set. Outside the selection." };
+
+  // 1. The model edits outside the selection too. Both hunks show; the user rejects the stray one.
+  await useScriptSteps([
+    { kind: 'tool', name: 'stage_edit', args: { path: HELPERS, edits: [...toyEdits.edits, outside] } },
+    { kind: 'gated', name: 'apply_changes', args: { summary: 'Toy edit, plus one outside the selection.' } },
+    { kind: 'text', text: 'Done.' },
+  ]);
+  const lines = await selectGetDebugFlag();
+  let { running } = await startInline(TASK_A_INSTRUCTION);
+  await waitForReview();
+  const staged = await hunks();
+  // The toy edit's two changes are within the hunk context of each other, so they are one hunk.
+  check(staged.length === 2 && staged.filter((hunk) => hunk.newStart > lines.endLine).length === 1, 'two hunks, one of them outside the selection: ' + staged.map((hunk) => hunk.newStart).join(','));
+  for (const hunk of staged) {
+    await vscode.commands.executeCommand(hunk.newStart > lines.endLine ? 'forgelens.review.rejectHunk' : 'forgelens.review.acceptHunk', hunk.id);
+  }
+  await sleep(300);
+  await shot('p7-3-inline-stray-hunk-rejected');
+  await vscode.commands.executeCommand('forgelens.review.apply');
+  await running;
+  await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+  let after = onDisk(HELPERS);
+  check(after.includes('"nope", "nah"') && !after.includes('Outside the selection.'), 'only the hunks inside the selection landed');
+  report['outside'] = { hunks: staged.length, reviewCard: reviewCard((await state()).view)?.text };
+  await undoToClean();
+  check(onDisk(HELPERS) === original, 'undo restored the file');
+
+  // 2. The model stages, then stops without apply_changes. ForgeLens opens the review itself.
+  await useScriptSteps([
+    { kind: 'tool', name: 'stage_edit', args: toyEdits },
+    { kind: 'text', text: 'I have made the change.' },
+  ]);
+  await selectGetDebugFlag();
+  ({ running } = await startInline(TASK_A_INSTRUCTION));
+  await waitForReview();
+  const card = reviewCard((await state()).view);
+  check((card?.warning ?? '').includes('stopped before asking for review'), 'the card says why the review opened: ' + String(card?.warning));
+  await acceptAndApply();
+  await running;
+  await waitFor('the diff tabs to close', () => diffTabs().length === 0, 10_000);
+  after = onDisk(HELPERS);
+  check(after.includes('"nope", "nah"'), 'the staged edit landed after accept');
+  report['noApply'] = card?.warning;
+  await undoToClean();
+
+  // 3. Malformed tool arguments, then an edit that matches nothing, then giving up: a clear message, nothing changed.
+  await useScriptSteps([
+    { kind: 'tool', name: 'stage_edit', args: { path: HELPERS, edits: 'oops' } },
+    { kind: 'tool', name: 'stage_edit', args: { path: HELPERS, edits: [{ old_text: 'no such text anywhere in this file', new_text: 'x' }] } },
+    { kind: 'text', text: 'I could not make the change.' },
+  ]);
+  await selectGetDebugFlag();
+  ({ running } = await startInline(TASK_A_INSTRUCTION));
+  await running;
+  const failed = await state();
+  const toolCards = toolsOf(failed.view.items).filter((tool) => tool.name === 'stage_edit');
+  check(toolCards.length === 2 && toolCards.every((tool) => tool.status === 'error'), 'both bad calls show as errors on their cards: ' + toolCards.map((tool) => tool.status).join(','));
+  check(failed.view.status === 'error' && (failed.view.error ?? '').includes('did not propose a change'), 'a clear message: ' + String(failed.view.error));
+  check(diffTabs().length === 0 && (await hunks()).length === 0, 'no review and nothing staged');
+  check((await gitStatus()) === '', 'git stays clean');
+  check(onDisk(HELPERS) === original, 'the file is untouched');
+  await shot('p7-4-inline-malformed-clear-message');
+  report['malformed'] = { error: failed.view.error, tools: toolCards.map((tool) => tool.result?.slice(0, 120)) };
+  results['inlineRobust'] = report;
+}
+
 /** A command off the safe list still asks. */
 async function scenarioCommandAsks(): Promise<void> {
   await useScriptSteps([
@@ -1513,6 +1593,7 @@ export async function run(): Promise<void> {
       keybindings: scenarioKeybindings,
       inline: scenarioInline,
       'inline-fallback': scenarioInlineFallback,
+      'inline-robust': scenarioInlineRobust,
       'inline-cancel': scenarioInlineCancel,
       'inline-mentions': scenarioInlineMentions,
       'agent-flow': scenarioAgentFlow,

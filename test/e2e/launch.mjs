@@ -73,7 +73,7 @@ const env = {
   FORGELENS_FLASK: flask,
   FORGELENS_E2E_SESSION_URL: process.env.FORGELENS_E2E_SESSION_URL ?? '',
   FORGELENS_E2E_WORKSPACE: workspace,
-  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'review,reject,stop-review,stop-staging,drift,crlf,create-delete,ctrl-z,keybindings,inline,inline-fallback,inline-cancel,inline-mentions,agent-flow,plan-card,command-asks,panel-mentions,fallback-banner',
+  FORGELENS_E2E_SCENARIOS: process.argv[3] ?? 'review,reject,stop-review,stop-staging,drift,crlf,create-delete,ctrl-z,keybindings,inline,inline-fallback,inline-robust,inline-cancel,inline-mentions,agent-flow,plan-card,command-asks,panel-mentions,fallback-banner',
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
