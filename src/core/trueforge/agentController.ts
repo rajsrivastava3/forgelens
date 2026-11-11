@@ -165,6 +165,14 @@ export class AgentController {
         // A follow-up turn that has to start a new session carries what the old one knew: the request and the plan.
         const sent = fresh && freshPrompt ? freshPrompt : prompt;
         const result = await this.attempt(model, agentName, sent, fresh, sendOptions.firstTurnReadLimit);
+        // Once accepted hunks are on disk, a later failure must not undo them or start another model: the
+        // change stays, the run ends with a note, and Undo is there.
+        const applied = this.builder.appliedThisRequest();
+        if (applied && ((result.kind === 'outcome' && result.outcome.status === 'error') || result.kind === 'failed')) {
+          const error = result.kind === 'failed' ? result.error : result.outcome.status === 'error' ? result.outcome.error : undefined;
+          this.builder.settleAfterApply(error ? shortReason(error) : 'unknown error');
+          return;
+        }
         if (result.kind === 'outcome') {
           const { outcome } = result;
           if (outcome.status === 'cancelled' || outcome.status === 'error') this.options.discardStaged?.();

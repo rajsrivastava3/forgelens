@@ -94,6 +94,8 @@ function build(plan: Record<string, Behaviour[]>, extra: Partial<ConstructorPara
 
 const notices = (controller: AgentController): NoticeItem[] => controller.view.items.filter((item): item is NoticeItem => item.kind === 'notice');
 const err = (status: number, text: string): Behaviour => ({ error: `[Model Error] Request failed (${status}): ${text}` });
+const FREE_TIER_429 =
+  '[Model Error] Request failed (429): You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash, description: Generate content requests per day limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\nPlease retry in 11h9m17.744126244s.';
 
 describe('failure classification', () => {
   it.each([
@@ -132,6 +134,14 @@ describe('failure classification', () => {
     expect(shortReason(describeTurnError('[Model Error] Request failed (400): API key not valid. Please pass a valid API key.'))).toBe('invalid API key (400)');
     expect(shortReason(describeTurnError('[Model Error] Request failed (400): Bad Request'))).toBe('request rejected (400), possibly an invalid key');
     expect(shortReason(describeTurnError('[Model Error] Request failed (400): Unsupported field: foo.'))).toBe('request rejected (400)');
+    const freeTier = describeTurnError(FREE_TIER_429);
+    expect(freeTier.kind).toBe('quota');
+    expect(freeTier.message).toBe("Model quota exceeded (429): this API key's project has no billing for gemini-3.8-flash, so Google meters it as free tier (generate content requests per day limit exceeded on free tier). Add billing to the project or use another model. Retry in 11h9m17s.");
+    expect(shortReason(freeTier)).toBe("quota exceeded (429), the key's project has no billing for it");
+    const depleted = describeTurnError('[Model Error] Request failed (402): Your prepayment credits are depleted.');
+    expect(depleted.message).toBe("The model provider's prepaid credits are depleted (402): Your prepayment credits are depleted. Top up the credit or switch to another provider.");
+    expect(shortReason(depleted)).toBe('prepaid credits depleted (402)');
+    expect(describeTurnError('[Model Error] Request failed (429): Slow down.').message).toBe('Model quota exceeded (429).');
   });
 });
 
@@ -144,7 +154,7 @@ describe('ModelChain in the controller', () => {
     expect(controller.view.status).toBe('done');
     expect(controller.activeModel).toBe(FALLBACK);
     expect(controller.view.model).toBe(FALLBACK);
-    expect(notices(controller)[0]).toMatchObject({ tone: 'warning', text: 'Primary model failed: billing refused the request (402). Switched to gemini-flash-lite-latest automatically.' });
+    expect(notices(controller)[0]).toMatchObject({ tone: 'warning', text: 'Primary model failed: prepaid credits depleted (402). Switched to gemini-flash-lite-latest automatically.' });
     expect(discard).toHaveBeenCalled();
     expect(server.createSession.mock.calls.map((call) => call[1])).toEqual([PRIMARY, FALLBACK]);
   });
@@ -246,6 +256,26 @@ describe('ModelChain in the controller', () => {
     await sending;
     expect(server.attempts).toEqual([PRIMARY]);
     expect(controller.view.status).toBe('cancelled');
+  });
+
+  it('a failure after the change was applied keeps the change, starts no fallback, and ends the run as done', async () => {
+    const { controller, server, discard } = build({ [PRIMARY]: [err(503, 'The model is overloaded.')] });
+    // The apply happened during the turn: the review card reached the controller before the model failed.
+    const inner = server.sessions.createTurnStream;
+    server.sessions.createTurnStream = (sessionId, request, options) => {
+      controller.updateReview({ id: 'r1', phase: 'applied', text: 'Applied 1/1 hunks in 1 file', files: 1, hunks: 1, accepted: 1, rejected: 0, pending: 0, canUndo: true, warning: undefined });
+      return inner(sessionId, request, options);
+    };
+    await controller.send('change it');
+    expect(server.attempts).toEqual([PRIMARY]);
+    expect(discard).not.toHaveBeenCalled();
+    expect(controller.view.status).toBe('done');
+    expect(controller.view.error).toBeUndefined();
+    const notice = notices(controller).at(-1);
+    expect(notice?.tone).toBe('info');
+    expect(notice?.text).toBe("Applied 1/1 hunks in 1 file. The model's request after it failed (provider unavailable (503)), so the run stopped there. The applied change stays; Undo reverts it.");
+    const card = controller.view.items.find((item) => item.kind === 'review');
+    expect(card && card.kind === 'review' && card.phase === 'applied' && card.canUndo).toBe(true);
   });
 
   it('with one model configured, a failure is just reported', async () => {

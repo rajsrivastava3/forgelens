@@ -1512,7 +1512,7 @@ async function scenarioFallbackBanner(): Promise<void> {
     const banner = await read('.notice.warning');
     await shot('p5-1-fallback-banner');
     check(banner.clicked, 'the fallback banner is on screen');
-    check(banner.statusText === 'Primary model failed: billing refused the request (402). Switched to gemini-flash-lite-latest automatically.', 'the banner text: ' + banner.statusText);
+    check(banner.statusText === 'Primary model failed: prepaid credits depleted (402). Switched to gemini-flash-lite-latest automatically.', 'the banner text: ' + banner.statusText);
     const { view } = await state();
     check(view.status === 'done' && view.model === 'gemini-free/gemini-flash-lite-latest', 'the fallback finished the request: ' + view.status + ' ' + String(view.model));
 

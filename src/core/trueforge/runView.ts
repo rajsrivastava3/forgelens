@@ -170,6 +170,20 @@ export class RunViewBuilder {
     this.setStatus('running', text);
   }
 
+  /** True once this request wrote accepted hunks to disk. */
+  appliedThisRequest(): boolean {
+    return this.appliedText !== undefined;
+  }
+
+  /** The model failed after its change was applied: the change stays, the request is done, and Undo is there. */
+  settleAfterApply(reason: string): void {
+    this.settleTools();
+    this.view.error = undefined;
+    this.view.errorAction = undefined;
+    this.addNotice(`${this.appliedText ?? 'The change was applied'}. The model's request after it failed (${reason}), so the run stopped there. The applied change stays; Undo reverts it.`, 'info');
+    this.setStatus('done', 'Done');
+  }
+
   /** A clear banner that another model has taken over, with no action needed. */
   fallback(text: string): void {
     this.view.error = undefined;

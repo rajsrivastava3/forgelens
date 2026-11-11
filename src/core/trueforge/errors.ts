@@ -64,12 +64,22 @@ function describeRaw(raw: string, baseUrl: string): DescribedTurnError {
   if (httpStatus === 429) {
     const limit = /description: ([^.\n]*)/.exec(detail)?.[1];
     const retry = /retry in ((?:\d+h)?(?:\d+m)?[\d.]+)s/i.exec(detail)?.[1];
-    const parts = [`Model quota exceeded ${prefix}`.trim(), limit ? `: ${limit}.` : '.'];
-    const message = `${parts.join('')}${retry ? ` Retry in ${retry.replace(/\.\d+$/, '')}s.` : ''}`;
+    const model = /model: ([\w.-]+)/.exec(detail)?.[1];
+    const freeTier = /free[_ ]tier/i.test(detail);
+    const head = freeTier
+      ? `${`Model quota exceeded ${prefix}`.trim()}: this API key's project has no billing for ${model ?? 'this model'}, so Google meters it as free tier${limit ? ` (${limit.toLowerCase()})` : ''}. Add billing to the project or use another model.`
+      : `${`Model quota exceeded ${prefix}`.trim()}${limit ? `: ${limit}.` : '.'}`;
+    const message = `${head}${retry ? ` Retry in ${retry.replace(/\.\d+$/, '')}s.` : ''}`;
     return { kind: 'quota', httpStatus, message, raw };
   }
   if (httpStatus === 402) {
-    return { kind: 'billing', httpStatus, message: `The model provider refused the request for billing reasons ${prefix}: ${summary}`, raw };
+    const depleted = /depleted|insufficient|balance|credit/i.test(detail);
+    return {
+      kind: 'billing',
+      httpStatus,
+      message: depleted ? `The model provider's prepaid credits are depleted ${prefix}: ${summary} Top up the credit or switch to another provider.` : `The model provider refused the request for billing reasons ${prefix}: ${summary}`,
+      raw,
+    };
   }
   if (httpStatus === 401 || httpStatus === 403) {
     return { kind: 'auth', httpStatus, message: `The model provider rejected the API key ${prefix}: ${summary}`, raw };
@@ -119,13 +129,13 @@ export function shortReason(error: DescribedTurnError): string {
   const code = error.httpStatus ? ` (${error.httpStatus})` : '';
   switch (error.kind) {
     case 'billing':
-      return `billing refused the request${code}`;
+      return /depleted|insufficient|balance|credit/i.test(error.raw) ? `prepaid credits depleted${code}` : `billing refused the request${code}`;
     case 'auth':
       return `invalid API key${code}`;
     case 'model-not-found':
       return `model not available${code}`;
     case 'quota':
-      return `quota exceeded${code}`;
+      return /free[_ ]tier/i.test(error.raw) ? `quota exceeded${code}, the key's project has no billing for it` : `quota exceeded${code}`;
     case 'overloaded':
       return `provider unavailable${code}`;
     case 'network':
