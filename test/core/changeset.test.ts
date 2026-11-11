@@ -237,16 +237,40 @@ describe('Changeset and staging tools', () => {
     expect(changeset.hunks).toHaveLength(1);
   });
 
-  it('lands all edits of a call or none', async () => {
-    await expect(
-      stageEditTool(changeset, dir, {
-        path: 'src/a.py',
-        edits: [
-          { old_text: 'line 5\n', new_text: 'five\n' },
-          { old_text: 'not there at all', new_text: 'x' },
-        ],
-      }),
-    ).rejects.toThrow(/Edit 2 of 2.*Nothing from this call was staged/s);
+  it('stages the edits that match and reports the one that did not, with the nearest places', async () => {
+    const result = await stageEditTool(changeset, dir, {
+      path: 'src/a.py',
+      edits: [
+        { old_text: 'line 5\n', new_text: 'five\n' },
+        { old_text: 'line 77 is not there', new_text: 'x' },
+      ],
+    });
+    expect(result).toMatch(/^Staged 1 of 2 edits in src\/a.py, 1 not applied\./);
+    expect(result).toContain('Edit 2 of 2 was not applied: old_text was not found');
+    expect(result).toContain('Nearest places');
+    expect(result).toContain('+five');
+    expect(result.startsWith('Error')).toBe(false);
+    expect(changeset.hunks).toHaveLength(1);
+  });
+
+  it('skips an edit that changes nothing and stages the rest, as a normal result', async () => {
+    const result = await stageEditTool(changeset, dir, {
+      path: 'src/a.py',
+      edits: [
+        { old_text: 'line 3\n', new_text: 'line 3\n' },
+        { old_text: 'line 5\n', new_text: 'five\n' },
+      ],
+    });
+    expect(result).toMatch(/^Staged 1 of 2 edits in src\/a.py, skipped 1\./);
+    expect(result).toContain('Edit 1 of 2 skipped: old_text and new_text are the same');
+    expect(changeset.hunks).toHaveLength(1);
+  });
+
+  it('is an error only when nothing could be staged', async () => {
+    await expect(stageEditTool(changeset, dir, { path: 'src/a.py', edits: [{ old_text: 'line 3\n', new_text: 'line 3\n' }] })).rejects.toThrow(
+      /nothing to change.*Nothing from this call was staged in src\/a.py/s,
+    );
+    await expect(stageEditTool(changeset, dir, { path: 'src/a.py', edits: [{ old_text: 'zzz', new_text: 'y' }] })).rejects.toThrow(/Edit 1 of 1 was not applied.*Nothing from this call was staged/s);
     expect(changeset.isEmpty).toBe(true);
   });
 

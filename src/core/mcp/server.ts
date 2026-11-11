@@ -93,7 +93,8 @@ function buildMcpServer(options: EditorMcpServerOptions, parts: ServerParts): Mc
       if (parts.gather.count > parts.gather.limit) {
         options.onToolCall?.({ tool, args, at, ok: false });
         const text = parts.gather.limit < READ_LIMIT ? PLAN_LIMIT_MESSAGE : READ_LIMIT_MESSAGE;
-        return { content: [{ type: 'text' as const, text }], isError: true };
+        // Not an error: the model did nothing wrong, it is being told what to do next, so the card stays plain.
+        return { content: [{ type: 'text' as const, text }] };
       }
     }
     try {
@@ -226,7 +227,7 @@ function buildMcpServer(options: EditorMcpServerOptions, parts: ServerParts): Mc
     'stage_edit',
     {
       description:
-        'Propose search/replace edits to one file. Writes nothing to disk. Each old_text must match one place: exact text first, then ignoring whitespace differences. If it fails, the error lists the nearest places. All edits in a call land together or not at all. Returns the resulting diff.',
+        'Propose search/replace edits to one file. Writes nothing to disk. Each old_text must match one place: exact text first, then ignoring whitespace differences. Edits that match are staged; an edit whose old_text is not found is reported with the nearest places, and one whose old_text equals new_text is skipped. It is an error only when nothing could be staged. Returns the resulting diff.',
       inputSchema: {
         path: z.string().describe('Path relative to the workspace root'),
         edits: z

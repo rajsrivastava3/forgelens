@@ -146,7 +146,8 @@ describe('read limit', () => {
     for (let i = 0; i < 4; i += 1) expect((await read()).isError).toBeFalsy();
     for (let i = 0; i < 4; i += 1) expect(text(await search())).not.toBe(READ_LIMIT_MESSAGE);
     const refused = await read();
-    expect(refused.isError).toBe(true);
+    // Plain text, not an error: the model is being told what to do next, and the card must not turn red.
+    expect(refused.isError).toBeFalsy();
     expect(text(refused)).toBe('Read limit reached. Stage your edits with stage_edit now; reads unlock after the next stage_edit.');
     expect(text(await client.callTool({ name: 'find_symbol', arguments: { name: 'hi' } }))).toBe(READ_LIMIT_MESSAGE);
     // Tools outside the limit still work.
@@ -167,7 +168,7 @@ describe('read limit', () => {
     const client = await connect();
     for (let i = 0; i < 3; i += 1) expect((await client.callTool({ name: 'find_symbol', arguments: { name: 'hi' } })).isError).toBeFalsy();
     const refused = await client.callTool({ name: 'read_file', arguments: { path: 'hello.py' } });
-    expect(refused.isError).toBe(true);
+    expect(refused.isError).toBeFalsy();
     expect((refused.content as { text: string }[])[0]?.text).toBe(PLAN_LIMIT_MESSAGE);
     server.newTask();
     expect((await client.callTool({ name: 'read_file', arguments: { path: 'hello.py' } })).isError).toBeFalsy();

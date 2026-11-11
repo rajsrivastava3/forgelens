@@ -16,7 +16,10 @@ function miniDiff(change: FileChange | undefined, path: string): string {
   return `${describeFile(change)}\n${change.hunks.map(formatHunk).join('\n')}`;
 }
 
-/** All-or-nothing: if any edit fails, none of this call's edits are staged. */
+/**
+ * Stages the edits that match. An edit whose old_text equals new_text is skipped, one whose old_text is not found
+ * is reported with the nearest places, and the rest land. Only when nothing could be staged is the call an error.
+ */
 export async function stageEditTool(
   changeset: Changeset,
   workspaceRoot: string,
@@ -26,20 +29,33 @@ export async function stageEditTool(
   if (args.edits.length === 0) throw new Error('edits is empty.');
   let text = await changeset.currentText(path);
   const notes: string[] = [];
+  const problems: string[] = [];
+  let staged = 0;
+  let skipped = 0;
   for (const [index, edit] of args.edits.entries()) {
+    const label = `Edit ${index + 1} of ${args.edits.length}`;
     try {
       const result = applyEdit(text, edit);
       text = result.text;
-      if (result.match === 'whitespace') notes.push(`Edit ${index + 1} matched at line ${result.line} after ignoring whitespace.`);
+      staged += 1;
+      if (result.match === 'whitespace') notes.push(`${label} matched at line ${result.line} after ignoring whitespace.`);
     } catch (error) {
-      if (error instanceof EditMatchError) {
-        throw new Error(`Edit ${index + 1} of ${args.edits.length} in ${path}: ${error.message}\nNothing from this call was staged.`, { cause: error });
+      if (!(error instanceof EditMatchError)) throw error;
+      if (edit.old_text.replace(/\r\n/g, '\n') === edit.new_text.replace(/\r\n/g, '\n')) {
+        skipped += 1;
+        notes.push(`${label} skipped: old_text and new_text are the same, so it changes nothing.`);
+      } else {
+        problems.push(`${label} was not applied: ${error.message}`);
       }
-      throw error;
     }
   }
+  if (staged === 0) {
+    const why = problems.length > 0 ? problems.join('\n') : `Every edit has old_text equal to new_text, so there is nothing to change.`;
+    throw new Error(`${why}\nNothing from this call was staged in ${path}.`);
+  }
   const change = await changeset.stageText(path, text);
-  return capText([NOT_ON_DISK, ...notes, miniDiff(change, path)].join('\n'), 'Use get_staged_changes for a summary.');
+  const count = `Staged ${staged} of ${args.edits.length} edit${args.edits.length === 1 ? '' : 's'} in ${path}${skipped > 0 ? `, skipped ${skipped}` : ''}${problems.length > 0 ? `, ${problems.length} not applied` : ''}.`;
+  return capText([count, NOT_ON_DISK, ...notes, ...problems, miniDiff(change, path)].join('\n'), 'Use get_staged_changes for a summary.');
 }
 
 export async function stageCreateFileTool(
