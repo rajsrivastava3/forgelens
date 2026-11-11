@@ -182,7 +182,7 @@ describe('agent mode is told to keep costs down', () => {
   it('plans in one turn and implements in the next, reading narrowly and testing and applying once', () => {
     expect(text).toContain('A change runs as two turns of this session.');
     expect(text).toContain('Delegate the lookups to an explorer: call create_sub_agent once');
-    expect(text).toContain('search with search_code, at most 3 searches');
+    expect(text).toContain('search with search_code (on the MCP server named forgelens-editor, loaded with get_tool_info), at most 3 searches');
     expect(text).toContain('at most 150 lines a call');
     expect(text).toContain('Never read a range you have already read');
     expect(text).toContain('one stage_edit per file, with several edits in it');
@@ -194,6 +194,8 @@ describe('agent mode is told to keep costs down', () => {
   it('states the read limit and asks for defensive code over research', () => {
     expect(text).toContain('stop working after 8 in a turn with nothing staged');
     expect(text).toContain('Do not research library internals or edge cases before staging.');
+    expect(text).toContain('never send an edit whose old_text equals new_text');
+    expect(text).toContain('MCP server named forgelens-editor');
   });
 
   it('has a short iteration limit and names no file of any repository', () => {
