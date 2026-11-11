@@ -88,8 +88,8 @@ What it does:
    first model TrueForge lists. Click the model in the status bar to switch.
 
 The "Run ForgeLens" configuration starts that window with your other extensions turned off (`--disable-extensions`),
-because installed extensions can take the same shortcut: Claude Code and Code Runner both bind **Ctrl+Alt+K**, and
-the one installed last wins. The second configuration, "Run ForgeLens with your other extensions", keeps them; there,
+because installed extensions can take the same shortcut: two common ones (an AI chat extension and a code
+runner) both bind **Ctrl+Alt+K**, and the one installed last wins. The second configuration, "Run ForgeLens with your other extensions", keeps them; there,
 use **Ctrl+Alt+E** or the right-click menu if Ctrl+Alt+K does something else.
 
 ### Loading the agent definitions

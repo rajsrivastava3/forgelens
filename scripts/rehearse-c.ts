@@ -75,6 +75,7 @@ async function main(): Promise<void> {
   console.log('  Fell back automatically: ' + (fellBack ? 'yes' : 'no') + '. git status at the switch: "' + (statusAtFallback ?? 'no switch') + '".');
   console.log('  Final: ' + record.status + (record.error ? ' (' + record.error + ')' : '') + '. git status: "' + finalStatus + '". The fallback\'s edit ' + (landed ? 'landed after review.' : 'did not land.'));
   console.log('  Task A checks: ' + (checks.passed ? 'PASS' : 'FAIL') + '. Exact command printed ' + checks.exactCommand + '. pytest: ' + checks.pytest + '.' + (checks.passed ? '' : ' ' + checks.failures.join('; ')));
+  console.log(`  Failed tool cards: ${record.tools.filter((tool) => tool.status === 'error').length} of ${record.tools.length}${record.tools.some((tool) => tool.status === 'error') ? ' (' + record.tools.filter((tool) => tool.status === 'error').map((tool) => tool.name).join(', ') + ')' : ''}.`);
   console.log('  The process stayed responsive: ' + String(responsiveTicks) + ' timer ticks in ' + record.seconds.toFixed(1) + ' s.');
   console.log('  Cost: about Rs ' + (record.costUsd * INR_PER_USD).toFixed(2) + '. Spent in this run so far: Rs ' + spent.toFixed(2) + '.');
   console.log('  Session: ' + (record.sessionUrl ?? 'none'));

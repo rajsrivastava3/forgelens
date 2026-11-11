@@ -169,6 +169,7 @@ async function main(): Promise<void> {
       const inputs = record.perRequest.map((request) => request.input);
       const cached = record.perRequest.reduce((sum, request) => sum + request.cached, 0);
       console.log(`  Tokens per request (input): ${inputs.join(', ') || 'none reported'}. Largest ${Math.max(0, ...inputs)}, total ${inputs.reduce((a, b) => a + b, 0)}, of which cache reads ${cached}.${record.stoppedForCost ? ' Stopped by the cost guard.' : ''}`);
+      console.log(`  Failed tool cards: ${record.tools.filter((tool) => tool.status === 'error').length} of ${record.tools.length}${record.tools.some((tool) => tool.status === 'error') ? ' (' + record.tools.filter((tool) => tool.status === 'error').map((tool) => tool.name).join(', ') + ')' : ''}.`);
       console.log(`  Tools: ${record.tools.map((tool) => `${tool.thread === 'main' ? '' : 'sub:'}${tool.name}`).join(' ')}`);
       console.log(`  Session: ${record.sessionUrl ?? 'none'}`);
       break;

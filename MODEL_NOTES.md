@@ -204,6 +204,35 @@ the primary errors or takes over 10 s. And `forgelens.firstTokenTimeoutSeconds` 
 effort low every measured healthy first token was under 10 s, and with a hanging primary the old value meant 45 s,
 two retries and only then the fallback, over two minutes on screen.
 
+**What failed in the recorded take (12 November, 03:30 to 04:15 IST), from the kept sessions.** Task B passed, but
+the panel showed red tool cards. `scripts/session-audit.ts` over the 41 sessions since 03:00 IST found, by cause:
+5 `get_tool_info` and `call_tool` errors "MCP server 'deferred-tools' not found" in one run (the explorer guessed the
+server name); 2 `read_file` answers "Read limit for this turn reached", which were marked as errors though they
+only tell the model what to do next; 2 `stage_edit` errors "old_text was not found" in `tests/test_cli.py`; 1
+`stage_edit` error "old_text and new_text are the same, so this edit changes nothing. Nothing from this call was
+staged", which also threw away the valid edit in the same call; and 5 turn errors "Request failed (400): Bad
+Request" on `broken-primary`, which are the Task C takes working as intended. Fixes: `stage_edit` stages the edits
+that match, skips no-op edits and names the ones it could not apply (an error only when nothing could be staged);
+the read limit answer is plain text; the explorer is told the server is `forgelens-editor`; both agents are told
+never to send an edit whose old_text equals new_text. A failure after accepted hunks were written now ends the run
+as done with a note and keeps Undo, instead of discarding or falling back.
+
+**Live after the fixes (12 November, 04:50 to 05:10 IST), effort low, 0 failed tool cards in every run.**
+
+| Run | Result | Time | Requests | Cost | Failed cards |
+|---|---|---|---|---|---|
+| Task A 1 | pass | 5.6 s to diff, 7.7 s | 3 | Rs 0.70 | 0 of 2 |
+| Task A 2 | pass | 6.0 s to diff, 8.2 s | 3 | Rs 0.70 | 0 of 2 |
+| Task B 1 | pass, 4 files, 5 hunks | plan 31.8 s, review 62.5 s, 66.5 s | 14 | Rs 4.63 | 0 of 17 |
+| Task B 2 | pass, 3 files, 4 hunks | plan 23.9 s, review 60.8 s, 64.3 s | 18 | Rs 5.40 | 0 of 17 |
+| Task C (bad key) | pass, fell back, only helpers.py changed | 8.4 s | 4 | Rs 0.70 | 0 of 2 |
+
+Both Task B runs: explorer thread with `get_tool_info` and three `search_code` calls, staged pytest auto-approved,
+57 passed after apply, `config` in `flask --help`, masked JSON. Sessions 01m76dyhywqf9dyn5348xqqevz,
+01m76dz9v420ha8xs22gf5kczm, 01m76e0dv9akfz0cvyw6sg2zdq, 01m76e2znnvzaz8n9b2s20h6xd, 01m76e5ta55e30njdc26aqtyyy.
+The health check before these runs found gemini-3-8-flash answering again (first token 2.4 s), so the quota
+message of 02:20 IST had cleared earlier than its "retry in 11h" said.
+
 **TrueForge context-engineering features in the session (B4 evidence).** All in one passing Task B run (low effort,
 70.9 s, 15 requests, Rs 4.69, 3 files, 5 hunks, 57 tests pass): session 01m6r1qcx0s4pp2eqjdyce5tav, at
 http://localhost:8790/sessions/01m6r1qcx0s4pp2eqjdyce5tav. Times are from the start of the first turn.

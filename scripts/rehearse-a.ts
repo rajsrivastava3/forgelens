@@ -62,6 +62,7 @@ async function main(): Promise<void> {
       console.log(
         `Run ${run}: ${passed ? 'PASS' : 'FAIL'} on ${model}. ${record.secondsToDiff?.toFixed(1) ?? '-'} s to diff, ${record.seconds.toFixed(1)} s total, ${record.requests} requests, $${record.costUsd.toFixed(4)}, ${record.tokensIn}/${record.tokensOut} tokens, fallback: ${record.reviewNote ? 'yes' : 'no'}, effort: ${record.reasoningEffort}. Exact command: ${checks.exactCommand}. pytest: ${checks.pytest}.`,
       );
+      console.log(`  Failed tool cards: ${record.tools.filter((tool) => tool.status === 'error').length} of ${record.tools.length}${record.tools.some((tool) => tool.status === 'error') ? ' (' + record.tools.filter((tool) => tool.status === 'error').map((tool) => tool.name).join(', ') + ')' : ''}.`);
       if (!passed) console.log(`  ${[record.error, ...checks.failures].filter(Boolean).join('\n  ')}`);
       console.log(`  Session: ${record.sessionUrl ?? 'none'}`);
       break;
