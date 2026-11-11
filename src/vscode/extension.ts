@@ -191,7 +191,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return createSessionForModel(baseUrl(), definition, model, fetch, { reasoningEffort: config().get<string>('reasoningEffort', 'low') });
     },
     models: () => modelChain,
-    firstTokenMs: config().get<number>('firstTokenTimeoutSeconds', 45) * 1000,
+    firstTokenMs: config().get<number>('firstTokenTimeoutSeconds', 20) * 1000,
     // Checked on every request: TrueForge may have stopped or a setting changed since activation.
     ensureReady: runSetup,
     onChange: () => {

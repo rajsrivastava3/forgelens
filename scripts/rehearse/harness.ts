@@ -299,7 +299,7 @@ export async function startHarness(
       return result.model;
     },
     models: () => chain,
-    firstTokenMs: Number(process.env['FORGELENS_FIRST_TOKEN_S'] ?? 45) * 1000,
+    firstTokenMs: Number(process.env['FORGELENS_FIRST_TOKEN_S'] ?? 20) * 1000,
     onChange: () => {
       if (planMs === undefined && controller.view.items.some((item) => item.kind === 'plan')) planMs = Date.now() - started;
       const count = controller.view.items.filter((item) => item.kind === 'notice' && item.tone === 'warning').length;

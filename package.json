@@ -120,6 +120,12 @@
         "when": "editorTextFocus && !editorReadonly"
       },
       {
+        "command": "forgelens.editSelection",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e",
+        "when": "editorTextFocus && !editorReadonly"
+      },
+      {
         "command": "forgelens.stop",
         "key": "escape",
         "when": "forgelens.running && editorTextFocus && !suggestWidgetVisible && !findWidgetVisible && !renameInputVisible"
@@ -204,9 +210,9 @@
         },
         "forgelens.firstTokenTimeoutSeconds": {
           "type": "number",
-          "default": 45,
+          "default": 20,
           "minimum": 5,
-          "description": "If a model sends nothing within this many seconds, ForgeLens retries it and then falls back. Applies only before the first output."
+          "description": "Seconds to wait for a model's first output before the request is retried and then moved to the next model. 20 s suits reasoning effort low, where a healthy model answers within 10 s; raise it for medium or high effort, where a model may think longer before its first token."
         }
       }
     },

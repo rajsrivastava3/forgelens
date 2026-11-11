@@ -809,12 +809,12 @@ async function scenarioKeybindings(): Promise<void> {
   const text = vscode.window.activeTextEditor?.document.getText() ?? '';
   const lines = text.split('\n');
   // The extension's own binding appears in this file too, so only others count.
-  const clashes = lines.flatMap((line, i) => (/"key":\s*"ctrl\+alt\+k"/.test(line) && !line.includes('forgelens.') ? [line.trim() + ' ' + (lines[i + 1] ?? '').trim()] : []));
+  const clashes = lines.flatMap((line, i) => (/"key":\s*"ctrl\+alt\+[ke]"/.test(line) && !line.includes('forgelens.') ? [line.trim() + ' ' + (lines[i + 1] ?? '').trim()] : []));
   await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
   const all = await vscode.commands.getCommands(true);
   results['keybindings'] = { defaultLinesChecked: lines.length, ctrlAltKDefaults: clashes, commandRegistered: all.includes('forgelens.editSelection') };
   check(lines.length > 500, 'the default keybindings were read');
-  check(clashes.length === 0, 'Ctrl+Alt+K is free: ' + clashes.join('; '));
+  check(clashes.length === 0, 'Ctrl+Alt+K and Ctrl+Alt+E are free of VS Code defaults: ' + clashes.join('; '));
 }
 
 const TASK_A_INSTRUCTION = "Treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value that is treated as false.";

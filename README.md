@@ -17,7 +17,7 @@ itself on `127.0.0.1`, and the agent decides which to call. The agent definition
 What it does:
 
 - **Agent mode** in the ForgeLens panel: ask a question, or describe a change that may span several files.
-- **Inline edit**: select code, press **Ctrl+Alt+K** (Cmd+Alt+K on a Mac), say what should change.
+- **Inline edit**: select code, press **Ctrl+Alt+K** or **Ctrl+Alt+E** (Cmd+Alt+K or Cmd+Alt+E on a Mac), or right-click and choose **ForgeLens: Edit selection**, and say what should change.
 - **Per-hunk review**: every change opens as a diff with Accept hunk and Reject hunk above each hunk. Only accepted
   hunks are written, in one atomic edit, and **Undo** restores them.
 - **Context you can see**: a Context Pack card says which files were chosen for a request and why, and a Plan card
@@ -78,7 +78,7 @@ What it does:
    `gemini-3.6-flash`). Any provider TrueForge supports works; then list its model names in `forgelens.models`
    (step 5). The key stays in TrueForge.
 
-4. **Run the extension.** Open the `forgelens` folder in VS Code and press **F5** (Run Extension). A second window
+4. **Run the extension.** Open the `forgelens` folder in VS Code and press **F5** ("Run ForgeLens"). A second window
    opens, the Extension Development Host. In it, open the folder you want to work on, then the **ForgeLens** icon in
    the activity bar.
 
@@ -86,6 +86,11 @@ What it does:
    TrueForge model names to use, primary first. [`config/models.example.json`](config/models.example.json) shows the
    recommended settings. If you set nothing, ForgeLens uses the first two defaults that TrueForge has, or else the
    first model TrueForge lists. Click the model in the status bar to switch.
+
+The "Run ForgeLens" configuration starts that window with your other extensions turned off (`--disable-extensions`),
+because installed extensions can take the same shortcut: Claude Code and Code Runner both bind **Ctrl+Alt+K**, and
+the one installed last wins. The second configuration, "Run ForgeLens with your other extensions", keeps them; there,
+use **Ctrl+Alt+E** or the right-click menu if Ctrl+Alt+K does something else.
 
 ### Loading the agent definitions
 
@@ -104,7 +109,7 @@ Only one window at a time can host the tools, because they use a fixed local por
 | `forgelens.models` | `["google-gemini/gemini-3-8-flash", "google-gemini/gemini-3-6-flash"]` | TrueForge model names, primary first, fallbacks after |
 | `forgelens.reasoningEffort` | `low` | Sent as `model.params.reasoning_effort` (`default` sends nothing). `low` made Task A 4 to 6 times faster and Task B 2.5 times faster, and both still passed |
 | `forgelens.context.budgetTokens` | `6000` | Size of the Context Pack added to each agent request |
-| `forgelens.firstTokenTimeoutSeconds` | `45` | A model with no output by then is retried, then replaced |
+| `forgelens.firstTokenTimeoutSeconds` | `20` | A model with no output by then is retried, then replaced. Raise it for a higher reasoning effort |
 | `forgelens.commands.autoApprove` | `pytest`, `python -m pytest`, `git status`, `git diff` | Commands answered without asking, still through TrueForge's approval |
 | `forgelens.review.inlineDiff` | `true` | Show review diffs inline rather than side by side |
 | `forgelens.trueforgeUrl` | `http://localhost:8790` | Where TrueForge runs |
@@ -206,7 +211,7 @@ asks you, including any command with shell syntax such as `;` or `|`. Stop ends 
 
 ## Inline edit
 
-Select some code and press **Ctrl+Alt+K** (Cmd+Alt+K on a Mac), or right-click and choose **ForgeLens: Edit
+Select some code and press **Ctrl+Alt+K** or **Ctrl+Alt+E** (Cmd+Alt+K or Cmd+Alt+E on a Mac), or right-click and choose **ForgeLens: Edit
 selection**. Say what should change. Type `@` to add a file or symbol as context. The agent proposes the change,
 and the same hunk review opens. Esc or Stop cancels, and the workspace stays as it was.
 
@@ -246,7 +251,7 @@ Every request, in agent mode and inline edit, goes through the same chain:
 - A billing refusal (402), a bad key (401, 403, or a 400 that says so), an unknown model (404) or a request the
   provider will not take (400) moves to the next model at once.
 - A quota limit (429), an overloaded provider (5xx), an unreachable provider, or no output within
-  `forgelens.firstTokenTimeoutSeconds` (45 s, before the first output only) is retried twice, after about 1 s and
+  `forgelens.firstTokenTimeoutSeconds` (20 s, before the first output only) is retried twice, after about 1 s and
   3 s with some randomness, and then moves to the next model.
 - The next model gets a new session with the same agent and only the model swapped, and the same request with the
   same Context Pack. Anything the failed attempt staged is dropped, so nothing from it can reach disk.

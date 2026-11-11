@@ -173,6 +173,37 @@ with "The model did not propose a change", nothing staged, git clean). Scenarios
 in test/e2e/run.ts; screenshots p7-3 and p7-4. Stop after something is staged discards it and the panel says
 "Cancelled, workspace unchanged" (scenario stop-staging, screenshot p7-2).
 
+**`gemini-3-8-flash` unhealthy on 12 November (01:45 to 02:20 IST); `gemini-3-6-flash` fine.** During a practice take
+the primary failed twice (first-token timeout, then 503) and the chain fell back to 3-6-flash. Probes afterwards
+(`scripts/model-health.ts`, one tiny "Say OK." request each, effort low, 20 s apart): 3-8-flash 0 of 3 ok, 3-6-flash
+3 of 3 ok with first tokens of 1.5 to 4.3 s. In an earlier unbounded probe 3-8-flash answered once in about 16 s,
+hung with no token for over 2 and then over 5 minutes, and returned a 503. The exact bodies from the TrueForge log:
+
+```
+[Model Error] Request failed (503): This model is currently experiencing high demand. Spikes in demand are
+usually temporary. Please try again later.
+```
+
+```
+[Model Error] Request failed (429): You exceeded your current quota, please check your plan and billing details.
+* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20,
+  model: gemini-3.8-flash, description: Generate content requests per day limit exceeded on Free Tier.
+Please retry in 11h9m17s.
+```
+
+What this says: the 503 is Google-side demand. The 429 says the key's project is being metered as **free tier**
+for gemini-3.8-flash (20 requests a day), although it was paid for earlier runs; the same key serves 3-6-flash
+without a limit. Nothing in ForgeLens's setup changed between the models: same key, same `reasoning_effort: low`,
+same agents. So this is the Google project's billing or quota state, to check in AI Studio (plan and billing,
+and ai.dev/rate-limit), not a timeout or a parameter.
+
+Two changes because of it. `scripts/demo-prep.ps1` now sends one tiny request to the primary and one to the
+fallback, prints their first-token times, and prints NOT READY with the exact swap command
+(`.\scripts\demo-prep.ps1 -Primary google-gemini/gemini-3-6-flash -Fallback google-gemini/gemini-3-8-flash`) when
+the primary errors or takes over 10 s. And `forgelens.firstTokenTimeoutSeconds` defaults to 20 s instead of 45: at
+effort low every measured healthy first token was under 10 s, and with a hanging primary the old value meant 45 s,
+two retries and only then the fallback, over two minutes on screen.
+
 **TrueForge context-engineering features in the session (B4 evidence).** All in one passing Task B run (low effort,
 70.9 s, 15 requests, Rs 4.69, 3 files, 5 hunks, 57 tests pass): session 01m6r1qcx0s4pp2eqjdyce5tav, at
 http://localhost:8790/sessions/01m6r1qcx0s4pp2eqjdyce5tav. Times are from the start of the first turn.

@@ -1,16 +1,22 @@
 # Run before each recorded take: .\scripts\demo-prep.ps1
 # After Task C:                    .\scripts\demo-prep.ps1 -AfterTaskC
+# Swap primary and fallback:       .\scripts\demo-prep.ps1 -Primary google-gemini/gemini-3-6-flash -Fallback google-gemini/gemini-3-8-flash
 #
 # Checks TrueForge is up (starts it if not), resets the Flask folder, shows the models ForgeLens will use, checks
-# that the broken-primary provider exists but is not the primary, shows free RAM and disk, and prints READY.
+# that the broken-primary provider exists but is not the primary, sends one tiny request to the primary and one
+# to the fallback and times their first token, shows free RAM and disk, and prints READY.
 # -AfterTaskC puts the real primary back first in forgelens.models (the status-bar pick saves the broken one there).
+# Passing -Primary or -Fallback also writes forgelens.models in that order, so a slow primary can be swapped out.
+# -SkipHealth leaves the model requests out (they cost about a paisa each).
 param(
   [string]$Flask = (Join-Path $PSScriptRoot '..\..\flask'),
   [string]$TrueForge = 'http://localhost:8790',
   [string]$Primary = 'google-gemini/gemini-3-8-flash',
   [string]$Fallback = 'google-gemini/gemini-3-6-flash',
   [string]$Settings = (Join-Path $env:APPDATA 'Code\User\settings.json'),
-  [switch]$AfterTaskC
+  [switch]$AfterTaskC,
+  [switch]$SkipHealth,
+  [int]$MaxFirstTokenSeconds = 10
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,8 +38,9 @@ function Get-SettingText([string]$key) {
   if ($match.Success) { return $match.Groups[1].Value.Trim() } else { return $null }
 }
 
-if ($AfterTaskC) {
-  Say 'Putting the real primary back in forgelens.models...'
+$setModels = $AfterTaskC -or $PSBoundParameters.ContainsKey('Primary') -or $PSBoundParameters.ContainsKey('Fallback')
+if ($setModels) {
+  Say "Writing forgelens.models as [$Primary, $Fallback]..."
   $list = '[' + [Environment]::NewLine + '    "' + $Primary + '",' + [Environment]::NewLine + '    "' + $Fallback + '"' + [Environment]::NewLine + '  ]'
   if (Test-Path $Settings) {
     $text = Get-Content -Raw -Path $Settings
@@ -43,9 +50,18 @@ if ($AfterTaskC) {
       # Keep the file as VS Code wrote it: UTF-8 without a byte order mark.
       [System.IO.File]::WriteAllText($Settings, $text, (New-Object System.Text.UTF8Encoding($false)))
       Say "  forgelens.models is now [$Primary, $Fallback]. VS Code picks it up at once."
+    } elseif ([regex]::IsMatch($text, '^\s*\{\s*\}\s*$')) {
+      $text = '{' + [Environment]::NewLine + '  "forgelens.models": ' + $list + [Environment]::NewLine + '}' + [Environment]::NewLine
+      [System.IO.File]::WriteAllText($Settings, $text, (New-Object System.Text.UTF8Encoding($false)))
+      Say "  forgelens.models added to an empty settings.json."
     } else {
-      Say '  forgelens.models is not set, so the defaults apply. Nothing to change.'
+      # Add it after the opening brace; VS Code accepts a trailing comma after it.
+      $text = [regex]::Replace($text, '^(\s*\{)', ('$1' + [Environment]::NewLine + '  "forgelens.models": ' + $list + ','), 1)
+      [System.IO.File]::WriteAllText($Settings, $text, (New-Object System.Text.UTF8Encoding($false)))
+      Say "  forgelens.models added to settings.json."
     }
+  } else {
+    Problem "No settings.json at $Settings, so forgelens.models could not be written."
   }
 }
 
@@ -97,7 +113,24 @@ $broken = $names | Where-Object { $_ -like 'broken-primary/*' }
 if ($broken) { Say "  Task C provider present: $($broken -join ', ') (not the primary)." }
 else { Problem 'No broken-primary provider. See the README, Recording Task C, or run npm run rehearse:c once.' }
 
-# 5. Saved agents.
+# 5. Model health: one tiny request each to the primary and the fallback, timing the first token.
+$fallbackNow = $chain | Where-Object { $names -contains $_ -and $_ -ne $primaryNow -and $_ -notlike 'broken-*' } | Select-Object -First 1
+if ($SkipHealth) {
+  Say 'Model health: skipped.'
+} elseif ($primaryNow -and $primaryNow -notlike 'broken-*') {
+  $toCheck = @($primaryNow) + @($fallbackNow | Where-Object { $_ })
+  Say ("Model health (" + ($toCheck -join ', ') + "), first token limit $MaxFirstTokenSeconds s:")
+  $npx = if ($env:OS -eq 'Windows_NT') { 'npx.cmd' } else { 'npx' }
+  $lines = & $npx tsx (Join-Path $PSScriptRoot 'model-health.ts') --models ($toCheck -join ',') --runs 1 --gap-s 2 --effort low --max-first-token-s $MaxFirstTokenSeconds 2>&1
+  $healthExit = $LASTEXITCODE
+  foreach ($line in $lines) { if ($line -notmatch '^\{"effort"') { Say "  $line" } }
+  if ($healthExit -ne 0) {
+    $swap = if ($fallbackNow) { ".\scripts\demo-prep.ps1 -Primary $fallbackNow -Fallback $primaryNow" } else { 'pick another model in the status bar' }
+    Problem "The primary $primaryNow is slow or failing right now. To swap primary and fallback: $swap"
+  }
+}
+
+# 6. Saved agents.
 $agents = Get-Json '/api/v1/agents'
 if ($agents) {
   foreach ($agent in $agents.data) {
@@ -108,7 +141,7 @@ if ($agents) {
   Say '  (ForgeLens saves the agents again before each request, from the settings above.)'
 }
 
-# 6. Memory and disk.
+# 7. Memory and disk.
 $os = Get-CimInstance Win32_OperatingSystem
 $freeMb = [math]::Round($os.FreePhysicalMemory / 1024)
 Say "Free RAM: $freeMb MB"
