@@ -248,6 +248,19 @@ short. Two live Task B runs after the change passed with 0 failed tool cards of 
 and 5.40; the first fixed two failing tests of its own through the staged pytest). Sessions
 01m78xmrp6240smrdyvr1b3g0c and 01m78xr0hj1jxwyva9g0ahtg8g.
 
+**A third miss (13 November, 04:19 IST) and the line-number tool.** The model tried to remove a test it believed it
+had staged, with an old_text whose first line was never in the file. No text matching can meet that, so
+`stage_replace_lines` edits by the line numbers `read_file` shows (staged text included), with no matching at all:
+`end_line = start_line - 1` inserts, `new_text ""` deletes, and an optional `expect_first_line` refuses the edit
+with the real line if the file moved. It is preloaded for both agents. A `stage_edit` miss is now a plain result,
+not an error: it names where the first and last lines of old_text are, the nearest places, and says to read the
+lines and use `stage_replace_lines` rather than resend the text. A fuzzy tier was added as well (the block sharing
+at least three quarters of old_text's lines in order, when no other block comes close). Both agents are told never
+to resend a missed old_text from memory. Live after this: Task B 2 of 2 passed with 0 failed tool cards of 24 and
+22 (111 s and 89 s; each fixed failing tests of its own through the staged pytest, which added two test rounds),
+Task A passed in 6.0 s to the diff. Sessions 01m78zz0je8tsq8z0gd7kjtzwn, 01m7902xmbh3hrz54cts4yr6zw,
+01m79061ra0hz9c3efnnq9ynkh.
+
 **TrueForge context-engineering features in the session (B4 evidence).** All in one passing Task B run (low effort,
 70.9 s, 15 requests, Rs 4.69, 3 files, 5 hunks, 57 tests pass): session 01m6r1qcx0s4pp2eqjdyce5tav, at
 http://localhost:8790/sessions/01m6r1qcx0s4pp2eqjdyce5tav. Times are from the start of the first turn.

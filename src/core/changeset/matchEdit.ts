@@ -201,6 +201,64 @@ function anchoredSpan(fileLines: readonly string[], oldLines: readonly string[])
   return spans[0];
 }
 
+/** The least share of old_text's lines a fuzzy match must contain, in order. */
+const FUZZY_MIN_SHARE = 0.75;
+
+/**
+ * The block that shares the most lines with old_text, in order, when no other block comes close: the model
+ * remembered the first line wrong, or several lines. The span runs from the first matched line to the last.
+ */
+function fuzzySpan(fileLines: readonly string[], oldLines: readonly string[]): Span | undefined {
+  const wanted = oldLines.map(squeeze).filter((line) => line !== '');
+  if (wanted.length < 3) return undefined;
+  const squeezed = fileLines.map(squeeze);
+  const starts = new Set<number>();
+  for (let k = 0; k < Math.min(3, wanted.length); k += 1) {
+    squeezed.forEach((line, i) => {
+      if (line === wanted[k]) starts.add(Math.max(0, i - k));
+    });
+  }
+  const need = Math.ceil(wanted.length * FUZZY_MIN_SHARE);
+  const spans: Span[] = [];
+  for (const start of starts) {
+    const window = squeezed
+      .slice(start, Math.min(squeezed.length, start + Math.ceil(wanted.length * (1 + ANCHOR_SLACK))))
+      .map((line, i) => ({ line, i }))
+      .filter((entry) => entry.line !== '');
+    const n = wanted.length;
+    const m = window.length;
+    const table: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+    for (let i = 1; i <= n; i += 1) {
+      for (let j = 1; j <= m; j += 1) {
+        table[i]![j] = wanted[i - 1] === window[j - 1]!.line ? table[i - 1]![j - 1]! + 1 : Math.max(table[i - 1]![j]!, table[i]![j - 1]!);
+      }
+    }
+    const matched = table[n]![m]!;
+    if (matched < need) continue;
+    let i = n;
+    let j = m;
+    let first = -1;
+    let last = -1;
+    while (i > 0 && j > 0) {
+      if (wanted[i - 1] === window[j - 1]!.line) {
+        if (last < 0) last = window[j - 1]!.i;
+        first = window[j - 1]!.i;
+        i -= 1;
+        j -= 1;
+      } else if (table[i - 1]![j]! >= table[i]![j - 1]!) i -= 1;
+      else j -= 1;
+    }
+    if (first < 0) continue;
+    const span = { start: start + first, end: start + last, differing: n - matched };
+    if (!spans.some((other) => other.start === span.start && other.end === span.end)) spans.push(span);
+  }
+  spans.sort((a, b) => a.differing - b.differing);
+  const best = spans[0];
+  const next = spans[1];
+  if (!best || (next && next.differing <= best.differing)) return undefined;
+  return best;
+}
+
 /**
  * Applies one search/replace. old_text is looked for as given, then with whitespace differences ignored, then
  * with blank lines ignored, then as a block whose first and last lines match and whose middle is close. The
@@ -259,7 +317,9 @@ export function applyEdit(raw: string, edit: EditRequest): MatchedEdit {
   const replaceLines = (start: number, last: number, match: MatchedEdit['match'], differingLines?: number): MatchedEdit => {
     const lfStart = offsets[start] ?? 0;
     const lfEnd = (offsets[last] ?? 0) + (fileLines[last] ?? '').length;
-    const adjusted = reindent(newLines, leadingWhitespace(oldLines[0] ?? ''), leadingWhitespace(fileLines[start] ?? ''));
+    // Re-indenting follows the first line of old_text; an approximate match may start elsewhere, so it keeps
+    // new_text as written.
+    const adjusted = match === 'whitespace' ? reindent(newLines, leadingWhitespace(oldLines[0] ?? ''), leadingWhitespace(fileLines[start] ?? '')) : [...newLines];
     return { text: replaceRange(lfStart, lfEnd, adjusted.join('\n')), match, line: start + 1, ...(differingLines === undefined ? {} : { differingLines }) };
   };
   const start = matches[0];
@@ -269,6 +329,8 @@ export function applyEdit(raw: string, edit: EditRequest): MatchedEdit {
   if (blankFree) return replaceLines(blankFree.start, blankFree.end, 'approximate', 0);
   const anchored = anchoredSpan(fileLines, oldLines);
   if (anchored) return replaceLines(anchored.start, anchored.end, 'approximate', anchored.differing);
+  const fuzzy = fuzzySpan(fileLines, oldLines);
+  if (fuzzy) return replaceLines(fuzzy.start, fuzzy.end, 'approximate', fuzzy.differing);
 
   const candidates = nearestCandidates(fileLines, oldLines);
   const hints = anchorHints(fileLines, oldLines);

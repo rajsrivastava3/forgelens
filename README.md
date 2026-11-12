@@ -197,7 +197,7 @@ Reads are also capped. After 8 reads or searches in a turn with nothing staged, 
 `find_symbol`, `find_references`, `retrieve_context` and `repo_map` answer "Read limit reached. Stage your
 edits with stage_edit now; reads unlock after the next stage_edit." Any staging attempt or a new turn unlocks them.
 
-Only `retrieve_context`, `read_file`, `stage_edit`, `apply_changes` and `run_command` are loaded up front. The other
+Only `retrieve_context`, `read_file`, `stage_edit`, `stage_replace_lines`, `apply_changes` and `run_command` are loaded up front. The other
 ten tools are deferred: the agent finds them through TrueForge's `list_tools` and `get_tool_info` when it needs
 them, which saves about 1,100 tokens of tool definitions on every request (`npx tsx scripts/tool-sizes.ts`).
 
@@ -208,9 +208,10 @@ differences ignored, then with blank lines ignored, then as a block whose first 
 middle is close (at most a third of the lines different, and only one such place in the file). The last two are
 reported as approximate, with the number of lines that differed, and the diff in the result shows exactly what was
 replaced, so the model can see whether it meant that. An edit whose `new_text` is already in the file once is
-skipped as already applied; one whose `old_text` is not found is reported with where its first and last lines
-are and the nearest places. `unstage_file` drops what is staged for one file so the model can start that file
-again from disk.
+skipped as already applied. One whose `old_text` is not found is not an error: the result says where its first
+and last lines are, the nearest places, and how to go on. `stage_replace_lines` then edits by the line numbers
+`read_file` shows, with no text matching at all, and `unstage_file` drops what is staged for one file so the model
+can start that file again from disk. Both agents are told never to resend a missed `old_text` from memory.
 
 ## Running tests before review
 

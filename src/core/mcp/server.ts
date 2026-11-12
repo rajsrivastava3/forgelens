@@ -17,6 +17,7 @@ import { searchCodeTool } from '../tools/searchCode';
 import { findReferencesTool, findSymbolTool } from '../tools/symbols';
 import { CommandRunner, runCommandTool, RUN_COMMAND_TOOL } from '../tools/runCommand';
 import { getStagedChangesTool, stageCreateFileTool, stageDeleteFileTool,
+  stageReplaceLinesTool,
   unstageFileTool, stageEditTool } from '../tools/stageTools';
 import { getDiagnosticsTool, listDirTool, repoMapTool } from '../tools/workspaceViews';
 
@@ -261,6 +262,23 @@ function buildMcpServer(options: EditorMcpServerOptions, parts: ServerParts): Mc
       annotations: STAGING,
     },
     (args) => run('stage_delete_file', args, () => stageDeleteFileTool(changeset, root(), args)),
+  );
+
+  server.registerTool(
+    'stage_replace_lines',
+    {
+      description:
+        'Propose replacing lines start_line to end_line (1-based, inclusive, the numbers read_file shows, staged text included) with new_text. Set end_line to start_line minus one to insert before start_line; set new_text to "" to delete the lines. No text matching, so use it when stage_edit could not find your old_text. Writes nothing to disk. Returns the resulting diff.',
+      inputSchema: {
+        path: z.string().describe('Path relative to the workspace root'),
+        start_line: z.number().int().positive().describe('First line to replace, 1-based'),
+        end_line: z.number().int().describe('Last line to replace, inclusive; start_line - 1 inserts before start_line'),
+        new_text: z.string().describe('The new lines; "" deletes the range'),
+        expect_first_line: z.string().optional().describe('What you expect on start_line; the edit is refused with the real line if it differs'),
+      },
+      annotations: STAGING,
+    },
+    (args) => run('stage_replace_lines', args, () => stageReplaceLinesTool(changeset, root(), args)),
   );
 
   server.registerTool(

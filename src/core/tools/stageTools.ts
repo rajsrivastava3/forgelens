@@ -1,11 +1,11 @@
 import { normalizeStagePath, type Changeset, type FileChange } from '../changeset/changeset';
-import { formatHunk } from '../changeset/hunks';
+import { dominantEol, formatHunk } from '../changeset/hunks';
 import { applyEdit, EditMatchError, type EditRequest } from '../changeset/matchEdit';
 import { capText } from './output';
 
 const NOT_ON_DISK = 'Staged only: nothing is on disk until the user reviews it through apply_changes.';
 const RECOVERY =
-  'To retry: read_file the lines you mean (reads show the staged text) and copy old_text from them, keeping it short. To start this file over from what is on disk, call unstage_file first.';
+  'Do not send this old_text again from memory. Call read_file on the lines you mean (reads show the staged text), then either stage_replace_lines with the line numbers it shows, or stage_edit with old_text copied from it. To start this file over from what is on disk, call unstage_file first.';
 
 /**
  * A model sometimes sends the same insertion twice. When the edit grows old_text into new_text (an insertion or
@@ -81,8 +81,8 @@ export async function stageEditTool(
     return `Nothing new to stage in ${path}: ${notes.join(' ')}${change ? `\n${miniDiff(change, path)}` : ''}`;
   }
   if (staged === 0) {
-    const why = problems.length > 0 ? problems.join('\n') : `Every edit has old_text equal to new_text, so there is nothing to change.`;
-    throw new Error(`${why}\nNothing from this call was staged in ${path}. ${RECOVERY}`);
+    // Not an error: the model is told exactly where its text was and how to edit by line number instead.
+    return `No edit staged in ${path}.\n${problems.join('\n')}\n${RECOVERY}`;
   }
   const change = await changeset.stageText(path, text);
   const count = `Staged ${staged} of ${args.edits.length} edit${args.edits.length === 1 ? '' : 's'} in ${path}${skipped > 0 ? `, skipped ${skipped}` : ''}${problems.length > 0 ? `, ${problems.length} not applied` : ''}.`;
@@ -107,6 +107,45 @@ export async function stageDeleteFileTool(
   const path = normalizeStagePath(workspaceRoot, args.path);
   const change = await changeset.stageDelete(path);
   return change ? `${NOT_ON_DISK}\n${describeFile(change)}` : `${path}: the staged new file was removed.`;
+}
+
+export interface ReplaceLinesArgs {
+  path: string;
+  start_line: number;
+  end_line: number;
+  new_text: string;
+  expect_first_line?: string | undefined;
+}
+
+/**
+ * Replaces lines start_line to end_line (1-based, inclusive, as read_file numbers them) with new_text. With
+ * end_line one less than start_line it inserts before start_line. No text matching: the numbers come from a read.
+ */
+export async function stageReplaceLinesTool(changeset: Changeset, workspaceRoot: string, args: ReplaceLinesArgs): Promise<string> {
+  const path = normalizeStagePath(workspaceRoot, args.path);
+  const text = await changeset.currentText(path);
+  const eol = dominantEol(text);
+  const lines = text.split(/\r?\n/);
+  const trailing = lines.at(-1) === '';
+  if (trailing) lines.pop();
+  const start = Math.floor(args.start_line);
+  const end = Math.floor(args.end_line);
+  if (!(start >= 1 && start <= lines.length + 1 && end >= start - 1 && end <= lines.length)) {
+    return `No change staged in ${path}: the file has ${lines.length} lines, so start_line ${start} to end_line ${end} is not a range in it. Read the lines again and use the numbers read_file shows.`;
+  }
+  if (args.expect_first_line !== undefined && end >= start) {
+    const squeeze = (value: string): string => value.trim().replace(/\s+/g, ' ');
+    const actual = lines[start - 1] ?? '';
+    if (squeeze(actual) !== squeeze(args.expect_first_line)) {
+      return `No change staged in ${path}: line ${start} is "${actual.trim()}", not "${args.expect_first_line.trim()}". The file has changed since you read it; read_file the lines again.`;
+    }
+  }
+  const replacement = args.new_text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
+  const next = [...lines.slice(0, start - 1), ...(args.new_text === '' ? [] : replacement), ...lines.slice(end)];
+  const result = next.join(eol) + (trailing ? eol : '');
+  const change = await changeset.stageText(path, result);
+  const what = end >= start ? `Replaced lines ${start}-${end}` : `Inserted before line ${start}`;
+  return capText([`${what} of ${path} with ${replacement.length} line${replacement.length === 1 ? '' : 's'}.`, NOT_ON_DISK, miniDiff(change, path)].join('\n'), 'Use get_staged_changes for a summary.');
 }
 
 export function unstageFileTool(changeset: Changeset, workspaceRoot: string, args: { path: string }): string {

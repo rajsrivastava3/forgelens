@@ -8,7 +8,7 @@ import { applyAcceptedHunks, computeHunks, dominantEol, firstChangedLine, splitK
 import { applyEdit, EditMatchError } from '../../src/core/changeset/matchEdit';
 import { NodeEditorPort } from '../../src/core/tools/nodeEditorPort';
 import { readFileTool } from '../../src/core/tools/readFile';
-import { getStagedChangesTool, stageCreateFileTool, stageDeleteFileTool, stageEditTool, unstageFileTool } from '../../src/core/tools/stageTools';
+import { getStagedChangesTool, stageCreateFileTool, stageDeleteFileTool, stageEditTool, stageReplaceLinesTool, unstageFileTool } from '../../src/core/tools/stageTools';
 
 const numbered = (count: number, eol = '\n'): string =>
   Array.from({ length: count }, (_, i) => `line ${i + 1}`).join(eol) + eol;
@@ -239,6 +239,17 @@ describe('applyEdit', () => {
     expect(() => applyEdit(text, { old_text: 'zzz\nyyy', new_text: 'x' })).toThrow(/not in the file at all/);
   });
 
+  it('matches a block whose first line was remembered wrong, when it is the only block like it', () => {
+    const text = ['def test_config(app, runner):', '    app.config["A"] = 1', '    app.config["B"] = 2', '    cli = FlaskGroup(create_app=lambda: app)', '    result = runner.invoke(cli, ["config"])', '    assert result.exit_code == 0', '', '', 'def test_other():', '    pass', ''].join('\n');
+    const result = applyEdit(text, {
+      old_text: 'def test_config_command(app, runner):\n    app.config["A"] = 1\n    app.config["B"] = 2\n    cli = FlaskGroup(create_app=lambda: app)\n    result = runner.invoke(cli, ["config"])\n    assert result.exit_code == 0\n\n\ndef test_other():',
+      new_text: 'def test_other():',
+    });
+    expect(result.match).toBe('approximate');
+    expect(result.line).toBe(2);
+    expect(result.text).toBe('def test_config(app, runner):\ndef test_other():\n    pass\n');
+  });
+
   it('refuses empty old_text and edits that change nothing', () => {
     expect(() => applyEdit(file, { old_text: '  ', new_text: 'x' })).toThrow(/stage_create_file/);
     expect(() => applyEdit(file, { old_text: 'def a', new_text: 'def a' })).toThrow(/changes nothing/);
@@ -329,12 +340,36 @@ describe('Changeset and staging tools', () => {
     expect(unstageFileTool(changeset, dir, { path: 'src/a.py' })).toContain('nothing was staged');
   });
 
+  it('stage_replace_lines edits by line number, inserts, deletes, keeps CRLF, and refuses a bad range', async () => {
+    const replaced = await stageReplaceLinesTool(changeset, dir, { path: 'src/a.py', start_line: 5, end_line: 6, new_text: 'five\nsix' });
+    expect(replaced).toContain('Replaced lines 5-6 of src/a.py with 2 lines.');
+    expect(replaced).toContain('+five');
+    expect((await changeset.currentText('src/a.py')).split('\n').slice(3, 7)).toEqual(['line 4', 'five', 'six', 'line 7']);
+    const inserted = await stageReplaceLinesTool(changeset, dir, { path: 'src/a.py', start_line: 1, end_line: 0, new_text: '# header' });
+    expect(inserted).toContain('Inserted before line 1');
+    expect((await changeset.currentText('src/a.py')).startsWith('# header\nline 1\n')).toBe(true);
+    const deleted = await stageReplaceLinesTool(changeset, dir, { path: 'src/a.py', start_line: 1, end_line: 1, new_text: '' });
+    expect(deleted).toContain('Replaced lines 1-1 of src/a.py with 1 line');
+    expect((await changeset.currentText('src/a.py')).startsWith('line 1\n')).toBe(true);
+    const crlf = await stageReplaceLinesTool(changeset, dir, { path: 'src/crlf.py', start_line: 30, end_line: 30, new_text: 'thirty' });
+    expect(crlf).toContain('Replaced lines 30-30');
+    expect((await changeset.currentText('src/crlf.py')).endsWith('line 29\r\nthirty\r\n')).toBe(true);
+    const bad = await stageReplaceLinesTool(changeset, dir, { path: 'src/a.py', start_line: 40, end_line: 41, new_text: 'x' });
+    expect(bad).toMatch(/^No change staged in src\/a.py: the file has 30 lines/);
+    const guarded = await stageReplaceLinesTool(changeset, dir, { path: 'src/a.py', start_line: 10, end_line: 10, new_text: 'x', expect_first_line: 'line 11' });
+    expect(guarded).toMatch(/^No change staged in src\/a.py: line 10 is "line 10", not "line 11"/);
+  });
+
   it('is an error only when nothing could be staged', async () => {
     // A call made only of no-op edits changes nothing, and says so as a normal result rather than a red card.
     await expect(stageEditTool(changeset, dir, { path: 'src/a.py', edits: [{ old_text: 'line 3\n', new_text: 'line 3\n' }] })).resolves.toMatch(
       /^Nothing new to stage in src\/a.py: Edit 1 of 1 skipped: old_text and new_text are the same/,
     );
-    await expect(stageEditTool(changeset, dir, { path: 'src/a.py', edits: [{ old_text: 'zzz', new_text: 'y' }] })).rejects.toThrow(/Edit 1 of 1 was not applied.*Nothing from this call was staged.*unstage_file/s);
+    // A miss is a plain result too, with the way out, so the card never turns red for a model's slip.
+    const missed = await stageEditTool(changeset, dir, { path: 'src/a.py', edits: [{ old_text: 'zzz', new_text: 'y' }] });
+    expect(missed).toMatch(/^No edit staged in src\/a.py\.\nEdit 1 of 1 was not applied: old_text was not found/);
+    expect(missed).toContain('stage_replace_lines');
+    expect(missed).toContain('unstage_file');
     expect(changeset.isEmpty).toBe(true);
   });
 

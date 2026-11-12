@@ -1422,7 +1422,10 @@ async function scenarioInlineRobust(): Promise<void> {
   await running;
   const failed = await state();
   const toolCards = toolsOf(failed.view.items).filter((tool) => tool.name === 'stage_edit');
-  check(toolCards.length === 2 && toolCards.every((tool) => tool.status === 'error'), 'both bad calls show as errors on their cards: ' + toolCards.map((tool) => tool.status).join(','));
+  check(
+    toolCards.length === 2 && toolCards[0]?.status === 'error' && toolCards[1]?.status === 'done' && (toolCards[1]?.result ?? '').startsWith('No edit staged'),
+    'the malformed call is an error and the missed edit is a plain card with the way out: ' + toolCards.map((tool) => tool.status).join(','),
+  );
   check(failed.view.status === 'error' && (failed.view.error ?? '').includes('did not propose a change'), 'a clear message: ' + String(failed.view.error));
   check(diffTabs().length === 0 && (await hunks()).length === 0, 'no review and nothing staged');
   check((await gitStatus()) === '', 'git stays clean');
