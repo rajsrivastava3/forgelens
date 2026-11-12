@@ -180,6 +180,11 @@ export class Changeset {
     this.changes.clear();
   }
 
+  /** Drops what is staged for one file, so edits start again from the file on disk. True when there was something. */
+  unstage(relativePath: string): boolean {
+    return this.changes.delete(relativePath);
+  }
+
   private async reconcile(change: FileChange): Promise<DriftReport> {
     const bytes = this.port.hasUnsavedChanges(change.path) ? change.originalBytes : await this.port.readDiskBytes(change.path);
     const decoded = bytes === undefined ? undefined : decodeText(bytes);

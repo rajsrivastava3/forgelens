@@ -4,6 +4,23 @@ import { applyEdit, EditMatchError, type EditRequest } from '../changeset/matchE
 import { capText } from './output';
 
 const NOT_ON_DISK = 'Staged only: nothing is on disk until the user reviews it through apply_changes.';
+const RECOVERY =
+  'To retry: read_file the lines you mean (reads show the staged text) and copy old_text from them, keeping it short. To start this file over from what is on disk, call unstage_file first.';
+
+/**
+ * A model sometimes sends the same insertion twice. When the edit grows old_text into new_text (an insertion or
+ * an expansion of at least three lines) and new_text is already in the file, once, the earlier call did the
+ * work, and applying it again would add the lines a second time.
+ */
+function alreadyApplied(text: string, edit: EditRequest): boolean {
+  const squeeze = (value: string): string => value.replace(/\r\n/g, '\n').split('\n').map((line) => line.trim().replace(/\s+/g, ' ')).filter(Boolean).join('\n');
+  const wanted = squeeze(edit.new_text);
+  const before = squeeze(edit.old_text);
+  if (wanted.split('\n').length < 3 || !before || wanted.length <= before.length || !wanted.includes(before)) return false;
+  const haystack = squeeze(text);
+  const first = haystack.indexOf(wanted);
+  return first >= 0 && haystack.indexOf(wanted, first + 1) < 0;
+}
 
 function describeFile(change: FileChange): string {
   const added = change.hunks.reduce((sum, hunk) => sum + hunk.added, 0);
@@ -34,11 +51,21 @@ export async function stageEditTool(
   let skipped = 0;
   for (const [index, edit] of args.edits.entries()) {
     const label = `Edit ${index + 1} of ${args.edits.length}`;
+    if (alreadyApplied(text, edit)) {
+      skipped += 1;
+      notes.push(`${label} skipped: its new_text is already in the file, so this edit was applied earlier.`);
+      continue;
+    }
     try {
       const result = applyEdit(text, edit);
       text = result.text;
       staged += 1;
       if (result.match === 'whitespace') notes.push(`${label} matched at line ${result.line} after ignoring whitespace.`);
+      if (result.match === 'approximate') {
+        notes.push(
+          `${label} matched approximately at line ${result.line}: ${result.differingLines ? `${result.differingLines} line${result.differingLines === 1 ? '' : 's'} of old_text differed from the file` : 'blank lines differed'}. Check the diff below shows the lines you meant.`,
+        );
+      }
     } catch (error) {
       if (!(error instanceof EditMatchError)) throw error;
       if (edit.old_text.replace(/\r\n/g, '\n') === edit.new_text.replace(/\r\n/g, '\n')) {
@@ -49,9 +76,13 @@ export async function stageEditTool(
       }
     }
   }
+  if (staged === 0 && skipped > 0 && problems.length === 0) {
+    const change = changeset.get(path);
+    return `Nothing new to stage in ${path}: ${notes.join(' ')}${change ? `\n${miniDiff(change, path)}` : ''}`;
+  }
   if (staged === 0) {
     const why = problems.length > 0 ? problems.join('\n') : `Every edit has old_text equal to new_text, so there is nothing to change.`;
-    throw new Error(`${why}\nNothing from this call was staged in ${path}.`);
+    throw new Error(`${why}\nNothing from this call was staged in ${path}. ${RECOVERY}`);
   }
   const change = await changeset.stageText(path, text);
   const count = `Staged ${staged} of ${args.edits.length} edit${args.edits.length === 1 ? '' : 's'} in ${path}${skipped > 0 ? `, skipped ${skipped}` : ''}${problems.length > 0 ? `, ${problems.length} not applied` : ''}.`;
@@ -76,6 +107,13 @@ export async function stageDeleteFileTool(
   const path = normalizeStagePath(workspaceRoot, args.path);
   const change = await changeset.stageDelete(path);
   return change ? `${NOT_ON_DISK}\n${describeFile(change)}` : `${path}: the staged new file was removed.`;
+}
+
+export function unstageFileTool(changeset: Changeset, workspaceRoot: string, args: { path: string }): string {
+  const path = normalizeStagePath(workspaceRoot, args.path);
+  return changeset.unstage(path)
+    ? `${path}: staged changes dropped. Reads of it now show the file on disk; stage it again from that text.`
+    : `${path}: nothing was staged for it.`;
 }
 
 export function getStagedChangesTool(changeset: Changeset): Promise<string> {

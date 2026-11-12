@@ -16,7 +16,8 @@ import { retrieveContextTool } from '../tools/retrieveContext';
 import { searchCodeTool } from '../tools/searchCode';
 import { findReferencesTool, findSymbolTool } from '../tools/symbols';
 import { CommandRunner, runCommandTool, RUN_COMMAND_TOOL } from '../tools/runCommand';
-import { getStagedChangesTool, stageCreateFileTool, stageDeleteFileTool, stageEditTool } from '../tools/stageTools';
+import { getStagedChangesTool, stageCreateFileTool, stageDeleteFileTool,
+  unstageFileTool, stageEditTool } from '../tools/stageTools';
 import { getDiagnosticsTool, listDirTool, repoMapTool } from '../tools/workspaceViews';
 
 export const MCP_TOKEN_HEADER = 'x-forgelens-token';
@@ -260,6 +261,16 @@ function buildMcpServer(options: EditorMcpServerOptions, parts: ServerParts): Mc
       annotations: STAGING,
     },
     (args) => run('stage_delete_file', args, () => stageDeleteFileTool(changeset, root(), args)),
+  );
+
+  server.registerTool(
+    'unstage_file',
+    {
+      description: 'Drop what you staged for one file, so reads show the file on disk again and you can stage it afresh. Writes nothing to disk. Use it when your staged edits to a file went wrong.',
+      inputSchema: { path: z.string().describe('Path relative to the workspace root') },
+      annotations: STAGING,
+    },
+    (args) => run('unstage_file', args, () => Promise.resolve(unstageFileTool(changeset, root(), args))),
   );
 
   server.registerTool(

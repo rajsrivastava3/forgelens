@@ -98,11 +98,12 @@ describe('editor MCP server', () => {
       'stage_edit',
       'stage_create_file',
       'stage_delete_file',
+      'unstage_file',
       'apply_changes',
       'run_command',
       'extra_tool',
     ]);
-    const writers = ['stage_edit', 'stage_create_file', 'stage_delete_file', 'apply_changes', 'run_command'];
+    const writers = ['stage_edit', 'stage_create_file', 'stage_delete_file', 'unstage_file', 'apply_changes', 'run_command'];
     for (const tool of tools.filter((t) => t.name !== 'extra_tool')) {
       expect(tool.annotations?.readOnlyHint, tool.name).toBe(!writers.includes(tool.name));
     }

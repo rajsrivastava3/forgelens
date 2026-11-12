@@ -7,16 +7,27 @@ export interface EditRequest {
 
 export interface MatchedEdit {
   text: string;
-  /** How old_text was found. */
-  match: 'exact' | 'whitespace';
+  /**
+   * How old_text was found: as given, with whitespace differences ignored, or approximately (the same place
+   * once blank lines are ignored, or a block whose first and last lines match and whose middle is close).
+   */
+  match: 'exact' | 'whitespace' | 'approximate';
   /** 1-based line where the edit starts in the text it was applied to. */
   line: number;
+  /** For an approximate match: how many of the replaced lines differed from old_text. */
+  differingLines?: number;
 }
 
 export class EditMatchError extends Error {}
 
 const toLf = (text: string): string => text.replace(/\r\n/g, '\n');
 const squeeze = (line: string): string => line.trim().replace(/\s+/g, ' ');
+
+/** The share of the file's lines an approximate match may differ by, and the least similarity of those lines. */
+const APPROXIMATE_MAX_DIFFERING = 0.3;
+const APPROXIMATE_MIN_SIMILARITY = 0.6;
+/** An anchored match may be this much longer or shorter than old_text, in lines. */
+const ANCHOR_SLACK = 0.5;
 
 function offsetsOfLines(lfText: string): number[] {
   const offsets = [0];
@@ -100,7 +111,101 @@ export function nearestCandidates(fileLines: readonly string[], wanted: readonly
   });
 }
 
-/** Applies one search/replace: exact text first, then ignoring differences in whitespace. */
+/** Where the first and last lines of old_text appear on their own: the hint that most often explains a miss. */
+function anchorHints(fileLines: readonly string[], oldLines: readonly string[]): string {
+  const squeezed = fileLines.map(squeeze);
+  const where = (line: string | undefined): number[] => {
+    const wanted = squeeze(line ?? '');
+    return wanted ? squeezed.flatMap((candidate, i) => (candidate === wanted ? [i + 1] : [])) : [];
+  };
+  const first = oldLines.find((line) => line.trim() !== '');
+  const last = [...oldLines].reverse().find((line) => line.trim() !== '');
+  const parts: string[] = [];
+  const firstAt = where(first);
+  const lastAt = where(last);
+  if (firstAt.length > 0) parts.push(`The first line of old_text is at line ${firstAt.slice(0, 5).join(', ')}.`);
+  else if (first) parts.push('The first line of old_text is not in the file at all.');
+  if (last && last !== first) {
+    if (lastAt.length > 0) parts.push(`The last line is at line ${lastAt.slice(0, 5).join(', ')}.`);
+    else parts.push('The last line of old_text is not in the file at all.');
+  }
+  return parts.join(' ');
+}
+
+interface Span {
+  start: number;
+  end: number;
+  differing: number;
+}
+
+/**
+ * The same block with blank lines left out of the comparison: a model often drops or adds an empty line.
+ * Returns the one span whose non-blank lines all match, or nothing.
+ */
+function blankInsensitiveSpan(fileLines: readonly string[], oldLines: readonly string[]): Span | undefined {
+  const wanted = oldLines.map(squeeze).filter((line) => line !== '');
+  if (wanted.length === 0) return undefined;
+  const squeezed = fileLines.map(squeeze);
+  const spans: Span[] = [];
+  for (let start = 0; start < squeezed.length; start += 1) {
+    if (squeezed[start] !== wanted[0]) continue;
+    let i = start;
+    let matched = 0;
+    while (i < squeezed.length && matched < wanted.length) {
+      if (squeezed[i] === wanted[matched]) matched += 1;
+      else if (squeezed[i] !== '') break;
+      i += 1;
+    }
+    if (matched === wanted.length) spans.push({ start, end: i - 1, differing: 0 });
+  }
+  return spans.length === 1 ? spans[0] : undefined;
+}
+
+/**
+ * A block whose first and last lines are where old_text says, and whose middle is close enough: the model
+ * remembered the block a little wrong. Needs at least four lines, one place for the pair, and a middle that is
+ * mostly the same, line for line by words.
+ */
+function anchoredSpan(fileLines: readonly string[], oldLines: readonly string[]): Span | undefined {
+  const wanted = oldLines.map(squeeze);
+  const firstIndex = wanted.findIndex((line) => line !== '');
+  let lastIndex = wanted.length - 1;
+  while (lastIndex > firstIndex && wanted[lastIndex] === '') lastIndex -= 1;
+  if (firstIndex < 0 || lastIndex - firstIndex < 3) return undefined;
+  const head = wanted[firstIndex] as string;
+  const tail = wanted[lastIndex] as string;
+  const inner = oldLines.slice(firstIndex + 1, lastIndex).map(wordSet);
+  const length = lastIndex - firstIndex + 1;
+  const squeezed = fileLines.map(squeeze);
+  const spans: Span[] = [];
+  for (let start = 0; start < squeezed.length; start += 1) {
+    if (squeezed[start] !== head) continue;
+    const minEnd = start + Math.max(3, Math.floor(length * (1 - ANCHOR_SLACK)) - 1);
+    const maxEnd = Math.min(squeezed.length - 1, start + Math.ceil(length * (1 + ANCHOR_SLACK)) - 1);
+    for (let end = minEnd; end <= maxEnd; end += 1) {
+      if (squeezed[end] !== tail) continue;
+      const middle = fileLines.slice(start + 1, end).map(wordSet);
+      // Each remembered line is matched to its best counterpart nearby, so one dropped or added line does not
+      // shift every comparison after it.
+      let differing = 0;
+      for (const [i, words] of inner.entries()) {
+        const around = middle.slice(Math.max(0, i - 2), i + 3);
+        const best = around.reduce((top, candidate) => Math.max(top, similarity(words, candidate)), 0);
+        if (best < APPROXIMATE_MIN_SIMILARITY) differing += 1;
+      }
+      differing += Math.abs(middle.length - inner.length);
+      if (differing <= Math.max(1, Math.floor(length * APPROXIMATE_MAX_DIFFERING))) spans.push({ start, end, differing });
+    }
+  }
+  if (spans.length !== 1) return undefined;
+  return spans[0];
+}
+
+/**
+ * Applies one search/replace. old_text is looked for as given, then with whitespace differences ignored, then
+ * with blank lines ignored, then as a block whose first and last lines match and whose middle is close. The
+ * result says which, so the caller can tell the model when the match was approximate.
+ */
 export function applyEdit(raw: string, edit: EditRequest): MatchedEdit {
   const oldText = toLf(edit.old_text);
   const newText = toLf(edit.new_text);
@@ -151,16 +256,22 @@ export function applyEdit(raw: string, edit: EditRequest): MatchedEdit {
         .join(', ')}). Include more surrounding lines so it matches one.`,
     );
   }
+  const replaceLines = (start: number, last: number, match: MatchedEdit['match'], differingLines?: number): MatchedEdit => {
+    const lfStart = offsets[start] ?? 0;
+    const lfEnd = (offsets[last] ?? 0) + (fileLines[last] ?? '').length;
+    const adjusted = reindent(newLines, leadingWhitespace(oldLines[0] ?? ''), leadingWhitespace(fileLines[start] ?? ''));
+    return { text: replaceRange(lfStart, lfEnd, adjusted.join('\n')), match, line: start + 1, ...(differingLines === undefined ? {} : { differingLines }) };
+  };
   const start = matches[0];
-  if (start === undefined) {
-    const candidates = nearestCandidates(fileLines, oldLines);
-    const hint = candidates.length > 0 ? ` Nearest places in the file:\n\n${candidates.join('\n\n')}` : '';
-    throw new EditMatchError(`old_text was not found, even ignoring whitespace.${hint}`);
-  }
+  if (start !== undefined) return replaceLines(start, start + wanted.length - 1, 'whitespace');
 
-  const last = start + wanted.length - 1;
-  const lfStart = offsets[start] ?? 0;
-  const lfEnd = (offsets[last] ?? 0) + (fileLines[last] ?? '').length;
-  const adjusted = reindent(newLines, leadingWhitespace(oldLines[0] ?? ''), leadingWhitespace(fileLines[start] ?? ''));
-  return { text: replaceRange(lfStart, lfEnd, adjusted.join('\n')), match: 'whitespace', line: start + 1 };
+  const blankFree = blankInsensitiveSpan(fileLines, oldLines);
+  if (blankFree) return replaceLines(blankFree.start, blankFree.end, 'approximate', 0);
+  const anchored = anchoredSpan(fileLines, oldLines);
+  if (anchored) return replaceLines(anchored.start, anchored.end, 'approximate', anchored.differing);
+
+  const candidates = nearestCandidates(fileLines, oldLines);
+  const hints = anchorHints(fileLines, oldLines);
+  const hint = candidates.length > 0 ? ` Nearest places in the file:\n\n${candidates.join('\n\n')}` : '';
+  throw new EditMatchError(`old_text was not found, even ignoring whitespace.${hints ? ` ${hints}` : ''}${hint}`);
 }
