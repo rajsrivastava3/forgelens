@@ -233,6 +233,21 @@ Both Task B runs: explorer thread with `get_tool_info` and three `search_code` c
 The health check before these runs found gemini-3-8-flash answering again (first token 2.4 s), so the quota
 message of 02:20 IST had cleared earlier than its "retry in 11h" said.
 
+**Two more `stage_edit` misses in a take on 13 November (00:03 and 00:15 IST), and what changed.** In both, the
+model had put the new test inside `class TestRoutes` at the wrong indentation and then tried to take its own
+insertion out again with a 25 to 40 line `old_text` written from memory, a few words different from what it had
+staged. No exact or whitespace match could hit that, and the nearest places the error listed were unrelated.
+`stage_edit` now matches in four tiers: exact, whitespace-insensitive, blank-line-insensitive, and anchored (the
+first and last lines at one place, the middle at most a third different, line by line by words). The last two
+are reported as approximate with the number of lines that differed, and the result's diff shows what was replaced.
+Both failing calls match under the anchored tier (unit tests built from them). A re-sent insertion whose new_text
+is already in the file is skipped instead of added twice. A miss now says where the first and last lines of
+old_text are, and how to recover. `unstage_file` drops one file's staged edits so the model can start that file
+again from disk; both agents are told to copy old_text from read_file, which shows staged text, and to keep it
+short. Two live Task B runs after the change passed with 0 failed tool cards of 27 and 19 (89 s and 66 s, Rs 7.44
+and 5.40; the first fixed two failing tests of its own through the staged pytest). Sessions
+01m78xmrp6240smrdyvr1b3g0c and 01m78xr0hj1jxwyva9g0ahtg8g.
+
 **TrueForge context-engineering features in the session (B4 evidence).** All in one passing Task B run (low effort,
 70.9 s, 15 requests, Rs 4.69, 3 files, 5 hunks, 57 tests pass): session 01m6r1qcx0s4pp2eqjdyce5tav, at
 http://localhost:8790/sessions/01m6r1qcx0s4pp2eqjdyce5tav. Times are from the start of the first turn.
