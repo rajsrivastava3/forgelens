@@ -261,6 +261,19 @@ to resend a missed old_text from memory. Live after this: Task B 2 of 2 passed w
 Task A passed in 6.0 s to the diff. Sessions 01m78zz0je8tsq8z0gd7kjtzwn, 01m7902xmbh3hrz54cts4yr6zw,
 01m79061ra0hz9c3efnnq9ynkh.
 
+**A review of the code on 13 November (evening), and the runs after it.** `stage_replace_lines` was preloaded for
+the inline agent but missing from its `enable_tools`, as was `unstage_file`, which its instructions also name; both
+are enabled now, and a test checks every agent can reach what it preloads and what its instructions name. Whether
+TrueForge exposed a preloaded tool that was not enabled was not tested. A provider error with no rule of its own
+(a 413, a 422, a model error with no status) used to stop the run; it now moves to the next model. A Stop pressed
+while the session was being created still sent the turn; it sends nothing now. A `.venv` or `node_modules` that no
+ignore file names is left out of the file list, so it cannot reach the index or the staged copy. A plan whose
+heading is worded differently ("## Implementation plan", "Here is the plan:"), or missing, is still read as a plan.
+Live after this, one run each on 3.8 Flash at low effort: Task A passed (8.8 s to the diff, 3 requests, Rs 0.64),
+Task C passed with the invalid-key primary (banner, automatic fallback, `git status` empty at the switch, 10.1 s),
+Task B passed (81.3 s, 19 requests, Rs 5.65, 4 files, 7 hunks, 56 tests pass, 0 failed tool cards of 22). Sessions
+01m7adejq88axvqsvctjh3kbza, 01m7adfnmz1star6sst6xw6tqz, 01m7adgtq801czzhp2hmwe3r0s.
+
 **TrueForge context-engineering features in the session (B4 evidence).** All in one passing Task B run (low effort,
 70.9 s, 15 requests, Rs 4.69, 3 files, 5 hunks, 57 tests pass): session 01m6r1qcx0s4pp2eqjdyce5tav, at
 http://localhost:8790/sessions/01m6r1qcx0s4pp2eqjdyce5tav. Times are from the start of the first turn.
