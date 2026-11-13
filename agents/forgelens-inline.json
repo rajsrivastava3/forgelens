@@ -9,7 +9,7 @@
     "mcp_servers": [
       {
         "name": "forgelens-editor",
-        "enable_tools": ["read_file", "search_code", "find_symbol", "get_diagnostics", "stage_edit", "get_staged_changes", "apply_changes"],
+        "enable_tools": ["read_file", "search_code", "find_symbol", "get_diagnostics", "stage_edit", "stage_replace_lines", "unstage_file", "get_staged_changes", "apply_changes"],
         "preload_tools": ["read_file", "search_code", "stage_edit", "apply_changes", "stage_replace_lines"],
         "require_approval_for_tools": ["apply_changes", "run_command"]
       }

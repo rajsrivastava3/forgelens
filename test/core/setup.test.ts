@@ -41,6 +41,20 @@ describe('committed agent definitions', () => {
     expect(server?.require_approval_for_tools).toEqual(['apply_changes', 'run_command']);
     expect(JSON.stringify(definition)).not.toMatch(/gemini|groq|openai\//i);
   });
+
+  it.each([
+    ['forgelens-agent', agent],
+    ['forgelens-inline', inline],
+  ])('%s can reach every tool it preloads and every tool its instructions name', (_name, definition) => {
+    const server = definition.manifest.mcp_servers[0] as { enable_tools?: string[]; preload_tools: string[] };
+    const enabled = server.enable_tools;
+    if (!enabled) return; // No list means every tool is enabled.
+    for (const tool of server.preload_tools) expect(enabled).toContain(tool);
+    const named = ['stage_edit', 'stage_replace_lines', 'unstage_file', 'apply_changes', 'read_file', 'search_code'].filter((tool) =>
+      definition.manifest.instructions.includes(tool),
+    );
+    for (const tool of named) expect(enabled).toContain(tool);
+  });
 });
 
 describe('chooseModel', () => {
