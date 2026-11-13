@@ -169,7 +169,7 @@ calling tools (the block is staged and reviewed, the card says so); one that edi
 hunks show, the stray one is rejected, only the selection lands: "Applied 1/2 hunks in 1 file"); one that stages
 and stops without apply_changes (ForgeLens opens the review and says why); one that sends malformed tool
 arguments, then an edit that matches nothing, then gives up (both calls show as errors on their cards, the run ends
-with "The model did not propose a change", nothing staged, git clean). Scenarios inline-fallback and inline-robust
+with "The model did not propose a change", nothing staged, git clean). Scenarios inline-fallback and inline-tolerant
 in test/e2e/run.ts; screenshots p7-3 and p7-4. Stop after something is staged discards it and the panel says
 "Cancelled, workspace unchanged" (scenario stop-staging, screenshot p7-2).
 

@@ -1362,7 +1362,7 @@ async function scenarioSessionView(): Promise<void> {
 }
 
 /** Inline edit with models that misbehave: each ends in a reviewable diff or a clear message, never a half state. */
-async function scenarioInlineRobust(): Promise<void> {
+async function scenarioInlineTolerant(): Promise<void> {
   const report: Record<string, unknown> = {};
   const original = onDisk(HELPERS);
   const outside = { old_text: "What to return if the env var isn't set.", new_text: "What to return if the env var isn't set. Outside the selection." };
@@ -1432,7 +1432,7 @@ async function scenarioInlineRobust(): Promise<void> {
   check(onDisk(HELPERS) === original, 'the file is untouched');
   await shot('p7-4-inline-malformed-clear-message');
   report['malformed'] = { error: failed.view.error, tools: toolCards.map((tool) => tool.result?.slice(0, 120)) };
-  results['inlineRobust'] = report;
+  results['inlineTolerant'] = report;
 }
 
 /** A command off the safe list still asks. */
@@ -1596,7 +1596,7 @@ export async function run(): Promise<void> {
       keybindings: scenarioKeybindings,
       inline: scenarioInline,
       'inline-fallback': scenarioInlineFallback,
-      'inline-robust': scenarioInlineRobust,
+      'inline-tolerant': scenarioInlineTolerant,
       'inline-cancel': scenarioInlineCancel,
       'inline-mentions': scenarioInlineMentions,
       'agent-flow': scenarioAgentFlow,

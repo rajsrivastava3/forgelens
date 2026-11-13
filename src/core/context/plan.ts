@@ -31,7 +31,7 @@ const PLAN_HEADING = /^\s*(?:#+\s*)?(?:\*\*)?plan(?:\*\*)?\s*:?\s*(?:\*\*)?\s*$/
 /** A short heading or lead-in line that names a plan: a markdown heading, or a line that ends with a colon. */
 const LOOSE_PLAN_HEADING = /^\s*(?:#+\s+[^.\n]{0,40}\bplan\b[^.\n]{0,40}|(?:\*\*)?[^.\n]{0,40}\bplan\b[^.\n]{0,40}:(?:\*\*)?)\s*$/i;
 const BULLET = /^\s*(?:[-*]|\d+[.)])\s+(.*)$/;
-const PATH = /^[`*]*([\w.-]+(?:\/[\w.-]+)*\.[A-Za-z0-9]+|[\w.-]+\/[\w./-]+)[`*]*\s*(?:\([^)]*\))?\s*[:–-]\s*(.*)$/;
+const PATH = /^[`*]*([\w.-]+(?:\/[\w.-]+)*\.[A-Za-z0-9]+|[\w.-]+\/[\w./-]+)[`*]*\s*(?:\([^)]*\))?\s*[:\u2013-]\s*(.*)$/;
 
 /** Reads a plan written in the form PLAN_RULE asks for. Anything else, such as an answer, gives undefined. */
 export function parsePlan(output: string): PlanStep[] | undefined {
