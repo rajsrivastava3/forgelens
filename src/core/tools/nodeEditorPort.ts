@@ -20,6 +20,9 @@ const SKIPPED_DIRECTORIES = new Set([
   'out',
 ]);
 
+/** Never the project's own files, whether or not an ignore file says so. */
+const NEVER_WORKSPACE_FILES = /(^|\/)(\.git|\.venv|venv|node_modules|__pycache__|\.pytest_cache|\.tox)\//;
+
 const TRANSIENT_LOCK = /EBUSY|EPERM|EACCES|resource busy|being used by another process/i;
 const LOCK_RETRY_DELAYS_MS = [50, 100, 200, 400, 800, 1500];
 
@@ -55,7 +58,9 @@ export async function listWorkspaceFiles(workspaceRoot: string): Promise<string[
       ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
       { cwd: workspaceRoot, maxBuffer: 64 * 1024 * 1024 },
     );
-    return stdout.split('\0').filter((file) => file.length > 0);
+    // A virtual environment or node_modules that nobody added to an ignore file is still not the project's code:
+    // indexed, it would crowd the Context Pack, and a staged run would copy all of it.
+    return stdout.split('\0').filter((file) => file.length > 0 && !NEVER_WORKSPACE_FILES.test(file));
   } catch {
     return walk(workspaceRoot, '');
   }

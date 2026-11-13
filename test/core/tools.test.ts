@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { EditorPort } from '../../src/core/tools/editorPort';
@@ -219,6 +221,22 @@ describe.skipIf(!hasFlask)('on the real flask repo', () => {
     const out = await repoMapTool(flask, { budget_tokens: 1000 });
     expect(out).toMatch(/~\d+ of 1000 tokens/);
     expect(out.length).toBeLessThan(5000);
+  });
+});
+
+describe('listFiles in a git repository', () => {
+  it('leaves out a virtual environment and node_modules that no ignore file names', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'forgelens-list-'));
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      for (const file of ['src/app.py', '.venv/Lib/site-packages/click/core.py', 'web/node_modules/x/index.js', 'docs/venv.rst']) {
+        mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+        writeFileSync(path.join(root, file), 'x = 1\n');
+      }
+      expect((await new NodeEditorPort(root).listFiles()).sort()).toEqual(['docs/venv.rst', 'src/app.py']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
