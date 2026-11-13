@@ -38,6 +38,19 @@ describe('parsePlan', () => {
     expect(parsePlan('Plan:\n- README.md: note it')?.[0]).toEqual({ path: 'README.md', what: 'note it', why: '' });
   });
 
+  it('reads a plan whose heading is worded differently, or missing', () => {
+    const step = { path: 'a/b.py', what: 'change f', why: 'it is wrong.' };
+    expect(parsePlan('## Implementation plan\n- a/b.py: change f. Why: it is wrong.')).toEqual([step]);
+    expect(parsePlan('Here is the plan:\n- a/b.py: change f. Why: it is wrong.')).toEqual([step]);
+    expect(parsePlan('**The plan for this change:**\n1. a/b.py: change f. Why: it is wrong.')).toEqual([step]);
+    expect(parsePlan('I will make two edits.\n\n- a/b.py: change f. Why: it is wrong.\n- tests/test_b.py: cover f. Why: it needs a test.')).toHaveLength(2);
+  });
+
+  it('does not take an answer that lists files for a plan', () => {
+    expect(parsePlan('The flag is read in two places:\n- src/flask/helpers.py: get_debug_flag, line 27\n- src/flask/cli.py: run_command')).toBeUndefined();
+    expect(parsePlan('We plan nothing here. The function is in a/b.py.')).toBeUndefined();
+  });
+
   it('gives nothing for an answer to a question, or a plan with no file', () => {
     expect(parsePlan('get_debug_flag is defined in src/flask/helpers.py at line 27.')).toBeUndefined();
     expect(parsePlan('Plan:\n- think about it first')).toBeUndefined();

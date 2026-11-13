@@ -28,14 +28,26 @@ export const IMPLEMENT_MESSAGE =
   'Implement your plan now. Stage all edits with as few stage_edit calls as possible, run the tests once with run_command target=staged, fix only what fails, then call apply_changes once.';
 
 const PLAN_HEADING = /^\s*(?:#+\s*)?(?:\*\*)?plan(?:\*\*)?\s*:?\s*(?:\*\*)?\s*$/i;
+/** A short heading or lead-in line that names a plan: a markdown heading, or a line that ends with a colon. */
+const LOOSE_PLAN_HEADING = /^\s*(?:#+\s+[^.\n]{0,40}\bplan\b[^.\n]{0,40}|(?:\*\*)?[^.\n]{0,40}\bplan\b[^.\n]{0,40}:(?:\*\*)?)\s*$/i;
 const BULLET = /^\s*(?:[-*]|\d+[.)])\s+(.*)$/;
 const PATH = /^[`*]*([\w.-]+(?:\/[\w.-]+)*\.[A-Za-z0-9]+|[\w.-]+\/[\w./-]+)[`*]*\s*(?:\([^)]*\))?\s*[:–-]\s*(.*)$/;
 
 /** Reads a plan written in the form PLAN_RULE asks for. Anything else, such as an answer, gives undefined. */
 export function parsePlan(output: string): PlanStep[] | undefined {
   const lines = output.split(/\r?\n/);
-  const start = lines.findIndex((line) => PLAN_HEADING.test(line) || /^\s*(?:\*\*)?plan(?:\*\*)?\s*:\s*\S/i.test(line));
-  if (start < 0) return undefined;
+  let start = lines.findIndex((line) => PLAN_HEADING.test(line) || /^\s*(?:\*\*)?plan(?:\*\*)?\s*:\s*\S/i.test(line));
+  // Models do not always write the heading as asked: "## Implementation plan", "Here is the plan:".
+  if (start < 0) start = lines.findIndex((line) => LOOSE_PLAN_HEADING.test(line));
+  // Or they leave it out. A step in the form the rule asks for, a path and a "Why:", is still a plan.
+  if (start < 0) {
+    const firstStep = lines.findIndex((line) => {
+      const bullet = BULLET.exec(line);
+      return bullet?.[1] !== undefined && !/^\s{2,}/.test(line) && PATH.test(bullet[1].trim()) && /\bwhy\s*:/i.test(line);
+    });
+    if (firstStep < 0) return undefined;
+    start = firstStep - 1;
+  }
   const steps: PlanStep[] = [];
   for (const line of lines.slice(start + 1)) {
     const bullet = BULLET.exec(line);
