@@ -8,6 +8,7 @@ export type TurnErrorKind =
   | 'model-not-found'
   | 'bad-request'
   | 'unreachable'
+  | 'provider'
   | 'other';
 
 export interface DescribedTurnError {
@@ -96,6 +97,11 @@ function describeRaw(raw: string, baseUrl: string): DescribedTurnError {
   if (httpStatus === 400) {
     return { kind: 'bad-request', httpStatus, message: `The model provider rejected the request ${prefix}: ${summary}`, raw };
   }
+  // Any other failure the provider reported (a 408, 413 or 422, or a model error with no status): another model
+  // may well take the same request, so the chain moves on instead of stopping.
+  if (fromModel || httpStatus !== undefined) {
+    return { kind: 'provider', httpStatus, message: `The model provider failed ${prefix}: ${summary}`, raw };
+  }
   return { kind: 'other', httpStatus, message: `The agent failed: ${summary}`, raw };
 }
 
@@ -104,7 +110,8 @@ export type FailureAction = 'fallback' | 'retry' | 'stop';
 /**
  * Billing, auth, a missing model or a request the provider will not take cannot get better by trying again, so
  * they move to the next model at once. Quota, overload, network and timeouts may pass, so they retry first.
- * TrueForge being down, or the agent itself failing, is the same on every model, so there is nothing to switch to.
+ * Any other error the provider reported also moves on. TrueForge being down, or the agent itself failing, is the
+ * same on every model, so there is nothing to switch to.
  */
 export function failureAction(error: DescribedTurnError): FailureAction {
   switch (error.kind) {
@@ -112,6 +119,7 @@ export function failureAction(error: DescribedTurnError): FailureAction {
     case 'auth':
     case 'model-not-found':
     case 'bad-request':
+    case 'provider':
       return 'fallback';
     case 'quota':
     case 'overloaded':
@@ -145,6 +153,8 @@ export function shortReason(error: DescribedTurnError): string {
     case 'bad-request':
       // A custom OpenAI-compatible endpoint answers a bad key with a bare "Bad Request", nothing more.
       return /Bad Request\.?\s*$/i.test(error.raw) ? `request rejected${code}, possibly an invalid key` : `request rejected${code}`;
+    case 'provider':
+      return `provider error${code}`;
     default:
       return error.message;
   }

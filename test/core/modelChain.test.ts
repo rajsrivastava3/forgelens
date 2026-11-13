@@ -125,6 +125,16 @@ describe('failure classification', () => {
     expect(harness.message).toContain('TrueForge is not running at http://localhost:8790');
   });
 
+  it('moves to the next model on a provider error it has no name for', () => {
+    const tooLarge = describeTurnError('[Model Error] Request failed (413): Request entity too large.');
+    expect(tooLarge.kind).toBe('provider');
+    expect(failureAction(tooLarge)).toBe('fallback');
+    expect(shortReason(tooLarge)).toBe('provider error (413)');
+    const noStatus = describeTurnError('[Model Error] The model returned an empty response.');
+    expect(failureAction(noStatus)).toBe('fallback');
+    expect(noStatus.message).toBe('The model provider failed: The model returned an empty response.');
+  });
+
   it('does not switch models when the agent itself failed', () => {
     expect(failureAction(describeTurnError('You have reached iteration limit of 15, please request again'))).toBe('stop');
   });

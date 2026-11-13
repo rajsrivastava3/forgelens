@@ -260,8 +260,8 @@ lists; the rest keep their order.
 
 Every request, in agent mode and inline edit, goes through the same chain:
 
-- A billing refusal (402), a bad key (401, 403, or a 400 that says so), an unknown model (404) or a request the
-  provider will not take (400) moves to the next model at once.
+- A billing refusal (402), a bad key (401, 403, or a 400 that says so), an unknown model (404), a request the
+  provider will not take (400), or any other error the provider reports moves to the next model at once.
 - A quota limit (429), an overloaded provider (5xx), an unreachable provider, or no output within
   `forgelens.firstTokenTimeoutSeconds` (20 s, before the first output only) is retried twice, after about 1 s and
   3 s with some randomness, and then moves to the next model.
