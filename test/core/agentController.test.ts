@@ -87,6 +87,26 @@ describe('AgentController', () => {
     expect(instance.isBusy).toBe(false);
   });
 
+  it('honours a stop pressed while the session is being created, sending no turn', async () => {
+    let release: ((value: string) => void) | undefined;
+    const sessions = replaySessions([]);
+    const createTurnStream = vi.spyOn(sessions, 'createTurnStream');
+    const { instance } = controller(sessions, {
+      createSession: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    });
+    const sending = instance.send('go');
+    await vi.waitFor(() => expect(release).toBeDefined());
+    void instance.stop();
+    release?.('sess-1');
+    await sending;
+    expect(instance.view.status).toBe('cancelled');
+    expect(createTurnStream).not.toHaveBeenCalled();
+    expect(instance.isBusy).toBe(false);
+  });
+
   it('honours a stop pressed before the session is ready, sending nothing', async () => {
     let release: (value: string) => void = () => undefined;
     const sessions = replaySessions([]);

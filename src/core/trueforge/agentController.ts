@@ -244,6 +244,12 @@ export class AgentController {
     }
     this.builder.setSession(model, `${this.options.baseUrl()}/sessions/${this.sessionId}`);
     this.options.onChange();
+    // Stop pressed while the session was being created: there is no run yet to cancel, so no turn is sent.
+    if (this.stopRequested) {
+      const outcome: TurnOutcome = { status: 'cancelled', reason: 'client-cancelled' };
+      this.builder.applyOutcome(outcome);
+      return { kind: 'outcome', outcome };
+    }
 
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
