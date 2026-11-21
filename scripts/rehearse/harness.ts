@@ -28,7 +28,7 @@ export const PYTHON = path.join(VENV_SCRIPTS, 'python.exe');
 export const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
 export const BASE_URL = process.env['TRUEFORGE_BASE_URL'] ?? 'http://localhost:8790';
 const MCP_PORT = Number(process.env['FORGELENS_MCP_PORT'] ?? 8799);
-const MIN_FREE_RAM_MB = 1000;
+const MIN_FREE_RAM_MB = Number(process.env['FORGELENS_MIN_RAM_MB'] ?? 1000);
 /** The rehearsals use the extension's default unless told otherwise. */
 export const REASONING_EFFORT = process.env['FORGELENS_REASONING_EFFORT'] ?? 'low';
 
@@ -170,6 +170,14 @@ export interface RunRecord {
   secondsToDiff: number | undefined;
   /** Seconds from the instruction to each step a viewer sees. */
   timeline: { planCard: number | undefined; firstStage: number | undefined; reviewOpen: number | undefined };
+  /** Seconds from the instruction to each step, for timing the phases of a run. */
+  phases: {
+    contextCard: number | undefined;
+    turnStarts: number[];
+    threads: { created: number; done: number | undefined }[];
+    toolCalls: { tool: string; start: number; end: number; ok: boolean; turn: number }[];
+    requests: { turn: number; thread: string; input: number; output: number }[];
+  };
   reasoningEffort: string;
   requests: number;
   tokensIn: number;
@@ -242,6 +250,11 @@ export async function startHarness(
   let firstReviewMs: number | undefined;
   let firstStageMs: number | undefined;
   let planMs: number | undefined;
+  let contextMs: number | undefined;
+  const turnStartsMs: number[] = [];
+  const threadTimes = new Map<string, { created: number; done: number | undefined }>();
+  const toolTimes: { tool: string; start: number; end: number; ok: boolean; turn: number }[] = [];
+  const requestTurn = new Map<string, number>();
   let hunks = 0;
   let files: string[] = [];
   let requests = 0;
@@ -250,6 +263,7 @@ export async function startHarness(
   let costUsd = 0;
   let tokensCached = 0;
   const messageIds = new Set<string>();
+  const perTurn = new Map<string, number>();
 
   const flow: ReviewFlow = new ReviewFlow(port, { onCard: (card) => controller.updateReview(card), onWarning: log });
   // The server is created before the controller exists, as the extension does it.
@@ -263,6 +277,7 @@ export async function startHarness(
     shadowRoot: path.join(path.dirname(workspace), 'shadow'),
     onToolCall: (call) => {
       log(`[tool] ${call.tool} ok=${String(call.ok)}`);
+      toolTimes.push({ tool: call.tool, start: (Date.parse(call.at) - started) / 1000, end: (Date.now() - started) / 1000, ok: call.ok, turn: turnStartsMs.length });
       if (call.tool.startsWith('stage_') && call.ok) firstStageMs ??= Date.now() - started;
     },
   });
@@ -280,7 +295,10 @@ export async function startHarness(
   const scripted = sessionsOverride?.(callTool);
   const controller: AgentController = new AgentController({
     agentName: 'forgelens-agent',
-    onTurnStart: (readLimit) => mcp.newTask(readLimit),
+    onTurnStart: (readLimit) => {
+      turnStartsMs.push(Date.now() - started);
+      mcp.newTask(readLimit);
+    },
     baseUrl: () => BASE_URL,
     sessions: () => scripted ?? client.sessions,
     createSession: async (agentName, sessionModel) => {
@@ -301,6 +319,7 @@ export async function startHarness(
     models: () => chain,
     firstTokenMs: Number(process.env['FORGELENS_FIRST_TOKEN_S'] ?? 20) * 1000,
     onChange: () => {
+      if (contextMs === undefined && controller.view.items.some((item) => item.kind === 'context')) contextMs = Date.now() - started;
       if (planMs === undefined && controller.view.items.some((item) => item.kind === 'plan')) planMs = Date.now() - started;
       const count = controller.view.items.filter((item) => item.kind === 'notice' && item.tone === 'warning').length;
       if (count > noticeCount) {
@@ -331,6 +350,12 @@ export async function startHarness(
     },
     onEvent: (event) => {
       if (event.type === 'model.message' && event.model?.name) messageModel.set(event.id, event.model.name);
+      if (event.type === 'model.message' && !requestTurn.has(event.id)) requestTurn.set(event.id, turnStartsMs.length);
+      if (event.type === 'thread.created') threadTimes.set(event.threadId, { created: (Date.now() - started) / 1000, done: undefined });
+      if (event.type === 'thread.done') {
+        const times = threadTimes.get(event.threadId);
+        if (times) times.done = (Date.now() - started) / 1000;
+      }
       if (event.type === 'model.message' && !messageIds.has(event.id)) {
         messageIds.add(event.id);
         requests += 1;
@@ -338,6 +363,7 @@ export async function startHarness(
       // Each message reports its tokens, so a runaway turn is caught while it runs, not after. The stream sends the
       // message as an empty shell and the usage in a later delta, so both are read, keyed by message id.
       if ((event.type === 'model.message' || event.type === 'model.message.delta') && event.usage) {
+        perTurn.set(event.id, requestTurn.get(event.id) ?? turnStartsMs.length);
         const request = { thread: event.threadId === 'main' ? 'main' : 'sub', model: messageModel.get(event.id) ?? controller.activeModel ?? model, input: event.usage.inputTokens ?? 0, output: event.usage.outputTokens ?? 0, cached: event.usage.cacheReadTokens ?? 0 };
         const index = usageIndex.get(event.id);
         if (index === undefined) {
@@ -399,6 +425,13 @@ export async function startHarness(
           firstStage: firstStageMs === undefined ? undefined : firstStageMs / 1000,
           reviewOpen: firstReviewMs === undefined ? undefined : firstReviewMs / 1000,
         },
+        phases: {
+          contextCard: contextMs === undefined ? undefined : contextMs / 1000,
+          turnStarts: turnStartsMs.map((ms) => ms / 1000),
+          threads: [...threadTimes.values()],
+          toolCalls: [...toolTimes],
+          requests: [...usageIndex.entries()].map(([id, index]) => ({ turn: perTurn.get(id) ?? 0, thread: perRequest[index]?.thread ?? 'main', input: perRequest[index]?.input ?? 0, output: perRequest[index]?.output ?? 0 })),
+        },
         reasoningEffort: REASONING_EFFORT,
         requests,
         tokensIn,
@@ -423,6 +456,10 @@ export async function startHarness(
       engine.dispose();
       await mcp.close();
       started = Date.now();
+      contextMs = undefined;
+      turnStartsMs.length = 0;
+      threadTimes.clear();
+      toolTimes.length = 0;
     },
   };
 }

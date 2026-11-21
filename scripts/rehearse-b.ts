@@ -118,6 +118,40 @@ export function dryRunSteps(mode: string): ScriptStep[] {
   return loadFixture(`task-b-${mode}`);
 }
 
+/** Seconds spent in each phase of one run, with tool calls and input tokens per turn. */
+export function phaseSummary(record: RunRecord): Record<string, number | string> {
+  const { phases, timeline } = record;
+  const round = (value: number): number => Math.round(value * 10) / 10;
+  const [planStart = 0, implementStart] = phases.turnStarts;
+  const explorer = phases.threads.reduce((sum, thread) => sum + ((thread.done ?? thread.created) - thread.created), 0);
+  const implementEnd = timeline.reviewOpen ?? record.seconds;
+  const inTurn = (turn: number) => phases.toolCalls.filter((call) => call.turn === turn);
+  const spent = (turn: number, test: (tool: string) => boolean): number => inTurn(turn).filter((call) => test(call.tool)).reduce((sum, call) => sum + (call.end - call.start), 0);
+  const isRead = (tool: string): boolean => !tool.startsWith('stage_') && tool !== 'run_command' && tool !== 'apply_changes';
+  const tokens = (turn: number): number => phases.requests.filter((request) => request.turn === turn).reduce((sum, request) => sum + request.input, 0);
+  const implement = implementStart === undefined ? 0 : implementEnd - implementStart;
+  const reads = spent(2, isRead);
+  const stages = spent(2, (tool) => tool.startsWith('stage_'));
+  const pytest = spent(2, (tool) => tool === 'run_command');
+  return {
+    context: round(phases.contextCard ?? 0),
+    explorer: round(explorer),
+    planTurn: round((timeline.planCard ?? planStart) - planStart),
+    implementTurn: round(implement),
+    implReads: round(reads),
+    implStage: round(stages),
+    implPytest: round(pytest),
+    implModel: round(implement - reads - stages - pytest),
+    toReview: round(implementEnd),
+    total: round(record.seconds),
+    planTools: inTurn(1).length,
+    implTools: inTurn(2).length,
+    planInputTokens: tokens(1),
+    implInputTokens: tokens(2),
+    implToolList: inTurn(2).map((call) => call.tool).join(' '),
+  };
+}
+
 async function main(): Promise<void> {
   checkResources();
   const workDir = path.resolve(arg('--work') ?? 'D:\\forgelens-e2e\\rehearse-b');
@@ -172,6 +206,7 @@ async function main(): Promise<void> {
       console.log(`  Failed tool cards: ${record.tools.filter((tool) => tool.status === 'error').length} of ${record.tools.length}${record.tools.some((tool) => tool.status === 'error') ? ' (' + record.tools.filter((tool) => tool.status === 'error').map((tool) => tool.name).join(', ') + ')' : ''}.`);
       console.log(`  Tools: ${record.tools.map((tool) => `${tool.thread === 'main' ? '' : 'sub:'}${tool.name}`).join(' ')}`);
       console.log(`  Session: ${record.sessionUrl ?? 'none'}`);
+      console.log(`  PHASES ${JSON.stringify(phaseSummary(record))}`);
       break;
     }
     if (modelIndex >= models.length) {
