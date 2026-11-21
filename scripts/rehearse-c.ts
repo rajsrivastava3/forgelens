@@ -3,6 +3,7 @@
  * lives in its own provider entry, so the real providers are never touched.
  *
  * Usage: npx tsx scripts/rehearse-c.ts --work D:\forgelens-e2e\rehearse-c --mode key|unreachable --fallback provider/model
+ *        npx tsx scripts/rehearse-c.ts --setup-only creates both broken providers for a recorded take and runs nothing.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -35,6 +36,10 @@ async function ensureBrokenProvider(mode: string): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  if (process.argv.includes('--setup-only')) {
+    for (const mode of ['key', 'unreachable']) console.log('Ready: ' + (await ensureBrokenProvider(mode)));
+    return;
+  }
   checkResources();
   const mode = arg('--mode') ?? 'key';
   const fallback = arg('--fallback') ?? 'google-gemini/gemini-3-8-flash';
@@ -68,7 +73,7 @@ async function main(): Promise<void> {
 
   const finalStatus = await git();
   const checks = await verifyTaskA(clone);
-  const fellBack = record.modelsTried.includes(fallback) && record.notices.some((notice) => notice.startsWith('Primary model failed'));
+  const fellBack = record.modelsTried.includes(fallback) && record.notices.some((notice) => /^Primary model (failed|unreachable)/.test(notice));
   const landed = finalStatus === 'M ' + FILE;
   console.log('Mode: ' + mode + '. Models tried: ' + record.modelsTried.join(' then ') + '. ' + record.seconds.toFixed(1) + ' s, ' + String(record.requests) + ' requests.');
   for (const notice of record.notices) console.log('  Notice: ' + notice);

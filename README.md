@@ -264,11 +264,12 @@ Every request, in agent mode and inline edit, goes through the same chain:
   provider will not take (400), or any other error the provider reports moves to the next model at once.
 - A quota limit (429), an overloaded provider (5xx), an unreachable provider, or no output within
   `forgelens.firstTokenTimeoutSeconds` (20 s, before the first output only) is retried twice, after about 1 s and
-  3 s with some randomness, and then moves to the next model.
+  2 s with some randomness, and then moves to the next model.
 - The next model gets a new session with the same agent and only the model swapped, and the same request with the
   same Context Pack. Anything the failed attempt staged is dropped, so nothing from it can reach disk.
 - The panel says so: "Primary model failed: invalid API key (401). Switched to gemini-3-8-flash automatically."
-  The status bar shows the model with "(fallback)".
+  After retries it says how many: "Primary model unreachable. Retried 2 times, switched to gemini-3-8-flash
+  automatically." The status bar shows the model with "(fallback)".
 - If every model fails, one message says why, with a **Switch model** button. If TrueForge itself is down, the
   message says how to start it.
 
@@ -288,8 +289,10 @@ Task C needs a primary that fails. Keep the real providers as they are and add a
 4. To restore: click the model in the status bar and choose your real primary again. Delete `broken-primary` under
    **Settings > Models** if you no longer need it.
 
-For an unreachable endpoint instead, give `broken-primary` the base URL `http://127.0.0.1:59999/v1`. That shows two
-quick retries before the switch.
+For an unreachable endpoint instead, choose `broken-unreachable/gemini-3-8-flash` in step 2. It is a second custom
+provider whose base URL is `http://127.0.0.1:59999/v1`, a port nothing listens on; `npx tsx scripts/rehearse-c.ts
+--setup-only` creates both broken providers without running anything. The panel shows two quick retries, then
+"Primary model unreachable. Retried 2 times, switched to gemini-3-8-flash automatically."
 
 ## Tests
 

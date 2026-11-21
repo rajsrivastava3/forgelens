@@ -112,6 +112,9 @@ if ($effort -and $effort.Trim('"') -ne 'low') { Problem "forgelens.reasoningEffo
 $broken = $names | Where-Object { $_ -like 'broken-primary/*' }
 if ($broken) { Say "  Task C provider present: $($broken -join ', ') (not the primary)." }
 else { Problem 'No broken-primary provider. See the README, Recording Task C, or run npm run rehearse:c once.' }
+$unreachable = $names | Where-Object { $_ -like 'broken-unreachable/*' }
+if ($unreachable) { Say "  Task C unreachable provider present: $($unreachable -join ', ') (not the primary)." }
+else { Say '  No broken-unreachable provider (optional). npx tsx scripts/rehearse-c.ts --setup-only adds it.' }
 
 # 5. Model health: one tiny request each to the primary and the fallback, timing the first token.
 $fallbackNow = $chain | Where-Object { $names -contains $_ -and $_ -ne $primaryNow -and $_ -notlike 'broken-*' } | Select-Object -First 1
