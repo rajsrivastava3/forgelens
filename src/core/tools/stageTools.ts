@@ -2,6 +2,7 @@ import { normalizeStagePath, type Changeset, type FileChange } from '../changese
 import { dominantEol, formatHunk } from '../changeset/hunks';
 import { applyEdit, EditMatchError, type EditRequest } from '../changeset/matchEdit';
 import { capText } from './output';
+import { missingImportNote } from './pythonImports';
 
 const NOT_ON_DISK = 'Staged only: nothing is on disk until the user reviews it through apply_changes.';
 const RECOVERY =
@@ -21,6 +22,11 @@ function alreadyApplied(text: string, edit: EditRequest): boolean {
   const first = haystack.indexOf(wanted);
   return first >= 0 && haystack.indexOf(wanted, first + 1) < 0;
 }
+
+const importNotes = (path: string, text: string): string[] => {
+  const note = missingImportNote(path, text);
+  return note ? [note] : [];
+};
 
 function describeFile(change: FileChange): string {
   const added = change.hunks.reduce((sum, hunk) => sum + hunk.added, 0);
@@ -86,7 +92,7 @@ export async function stageEditTool(
   }
   const change = await changeset.stageText(path, text);
   const count = `Staged ${staged} of ${args.edits.length} edit${args.edits.length === 1 ? '' : 's'} in ${path}${skipped > 0 ? `, skipped ${skipped}` : ''}${problems.length > 0 ? `, ${problems.length} not applied` : ''}.`;
-  return capText([count, NOT_ON_DISK, ...notes, ...problems, miniDiff(change, path)].join('\n'), 'Use get_staged_changes for a summary.');
+  return capText([count, NOT_ON_DISK, ...notes, ...problems, ...importNotes(path, text), miniDiff(change, path)].join('\n'), 'Use get_staged_changes for a summary.');
 }
 
 export async function stageCreateFileTool(
@@ -96,7 +102,7 @@ export async function stageCreateFileTool(
 ): Promise<string> {
   const path = normalizeStagePath(workspaceRoot, args.path);
   const change = await changeset.stageCreate(path, args.content);
-  return capText(`${NOT_ON_DISK}\n${miniDiff(change, path)}`, 'Use get_staged_changes for a summary.');
+  return capText([NOT_ON_DISK, ...importNotes(path, args.content), miniDiff(change, path)].join('\n'), 'Use get_staged_changes for a summary.');
 }
 
 export async function stageDeleteFileTool(
@@ -145,7 +151,7 @@ export async function stageReplaceLinesTool(changeset: Changeset, workspaceRoot:
   const result = next.join(eol) + (trailing ? eol : '');
   const change = await changeset.stageText(path, result);
   const what = end >= start ? `Replaced lines ${start}-${end}` : `Inserted before line ${start}`;
-  return capText([`${what} of ${path} with ${replacement.length} line${replacement.length === 1 ? '' : 's'}.`, NOT_ON_DISK, miniDiff(change, path)].join('\n'), 'Use get_staged_changes for a summary.');
+  return capText([`${what} of ${path} with ${replacement.length} line${replacement.length === 1 ? '' : 's'}.`, NOT_ON_DISK, ...importNotes(path, result), miniDiff(change, path)].join('\n'), 'Use get_staged_changes for a summary.');
 }
 
 export function unstageFileTool(changeset: Changeset, workspaceRoot: string, args: { path: string }): string {
