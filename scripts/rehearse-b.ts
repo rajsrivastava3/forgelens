@@ -173,7 +173,7 @@ async function main(): Promise<void> {
       const model = models[modelIndex] as string;
       const harness = await startHarness(clone, models.slice(modelIndex), scripted ? (call) => scriptedSessions(dryRunSteps(scripted), call) : undefined);
       const started = Date.now();
-      await sendAgentRequest(harness.controller, harness.engine, INSTRUCTION, () => ({}), harness.log);
+      await sendAgentRequest(harness.controller, harness.engine, INSTRUCTION, () => ({}), harness.log, { onPlan: harness.prepareShadow });
       const record = harness.record((Date.now() - started) / 1000);
       await harness.close();
       // A dry run spends nothing, even when it plays a priced model's usage to test the guard.

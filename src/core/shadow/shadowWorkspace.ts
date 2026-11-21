@@ -24,6 +24,7 @@ function isInside(outer: string, inner: string): boolean {
 export class ShadowWorkspace {
   private synced = false;
   private overlaid = new Set<string>();
+  private preparing: Promise<unknown> | undefined;
 
   constructor(
     private readonly workspaceRoot: () => string,
@@ -32,12 +33,46 @@ export class ShadowWorkspace {
     private readonly changeset: Changeset,
   ) {}
 
+  /**
+   * Starts the first copy in the background, once a change is planned, so the staged test run does not wait for
+   * it. Only real files are copied here; the staged edits are laid over them in `sync`, which waits for this.
+   */
+  prepare(): void {
+    if (this.synced || this.preparing) return;
+    // A failure here is not reported: `sync` copies again and reports its own.
+    this.preparing = this.copyWorkspace().catch(() => undefined);
+  }
+
   async sync(): Promise<ShadowSyncResult> {
+    if (this.preparing) await this.preparing;
+    const { files, copied } = await this.copyWorkspace();
+    // What the last run staged may be gone by now. Copies of real files came back above, by their changed time.
+    const listed = new Set(files);
+    for (const previous of this.overlaid) {
+      if (!listed.has(previous)) await rm(path.join(this.shadowRoot, previous), { force: true });
+    }
+    const overlaid = new Set<string>();
+    for (const change of this.changeset.files) {
+      const to = path.join(this.shadowRoot, change.path);
+      if (change.kind === 'delete') {
+        await rm(to, { force: true });
+      } else {
+        await mkdir(path.dirname(to), { recursive: true });
+        await writeFile(to, encodeText(change.staged, change.encoding));
+      }
+      overlaid.add(change.path);
+    }
+    this.overlaid = overlaid;
+    return { root: this.shadowRoot, copied, overlaid: overlaid.size };
+  }
+
+  /** Copies every workspace file that is new or changed since the last copy. */
+  private async copyWorkspace(): Promise<{ files: string[]; copied: number }> {
     const source = this.workspaceRoot();
     if (isInside(source, this.shadowRoot) || isInside(this.shadowRoot, source)) {
       throw new Error(`The shadow workspace must be outside the workspace: ${this.shadowRoot}`);
     }
-    // The first sync starts empty, so nothing from an earlier session can change a test result.
+    // The first copy starts empty, so nothing from an earlier session can change a test result.
     if (!this.synced) {
       await rm(this.shadowRoot, { recursive: true, force: true });
       this.synced = true;
@@ -66,24 +101,6 @@ export class ShadowWorkspace {
       await utimes(to, sourceStat.atime, sourceStat.mtime);
       copied += 1;
     }
-
-    // What the last run staged may be gone by now. Copies of real files came back above, by their changed time.
-    const listed = new Set(files);
-    for (const previous of this.overlaid) {
-      if (!listed.has(previous)) await rm(path.join(this.shadowRoot, previous), { force: true });
-    }
-    const overlaid = new Set<string>();
-    for (const change of this.changeset.files) {
-      const to = path.join(this.shadowRoot, change.path);
-      if (change.kind === 'delete') {
-        await rm(to, { force: true });
-      } else {
-        await mkdir(path.dirname(to), { recursive: true });
-        await writeFile(to, encodeText(change.staged, change.encoding));
-      }
-      overlaid.add(change.path);
-    }
-    this.overlaid = overlaid;
-    return { root: this.shadowRoot, copied, overlaid: overlaid.size };
+    return { files, copied };
   }
 }

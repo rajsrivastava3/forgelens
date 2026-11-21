@@ -203,6 +203,8 @@ export interface Harness {
   controller: AgentController;
   log: (message: string) => void;
   callTool: (name: string, args: unknown) => Promise<string>;
+  /** As the extension does once a plan is in: start the copy for the staged test run. */
+  prepareShadow: () => void;
   /** Everything gathered so far. */
   record: (seconds: number) => RunRecord;
   close: () => Promise<void>;
@@ -404,6 +406,7 @@ export async function startHarness(
     controller,
     log,
     callTool,
+    prepareShadow: () => mcp.prepareShadow(),
     record: (seconds) => {
       const { view } = controller;
       const review = [...view.items].reverse().find((item) => item.kind === 'review');

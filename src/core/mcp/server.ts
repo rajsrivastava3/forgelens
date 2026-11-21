@@ -55,6 +55,8 @@ export interface RunningEditorMcpServer {
   url: string;
   /** A new turn starts: the count of reads since the last staged edit starts again. */
   newTask(readLimit?: number): void;
+  /** A change is planned: start copying the workspace for the staged test run now, in the background. */
+  prepareShadow(): void;
   close(): Promise<void>;
 }
 
@@ -407,6 +409,7 @@ export function startEditorMcpServer(
           parts.gather.count = 0;
           parts.gather.limit = readLimit;
         },
+        prepareShadow: () => parts.shadow.prepare(),
         close: () =>
           new Promise((done, fail) => {
             http.close((err) => (err ? fail(err) : done()));

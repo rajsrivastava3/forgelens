@@ -150,6 +150,38 @@ describe('run_command and the shadow workspace', () => {
     expect(readFileSync(path.join(shadowRoot, 'src/a.txt'), 'utf8')).toContain('edited by the user');
   });
 
+  it('prepare copies the workspace ahead, and the staged run waits for it, then lays the staged edits over it', async () => {
+    mkdirSync(shadowRoot, { recursive: true });
+    writeFileSync(path.join(shadowRoot, 'left-over.txt'), 'old');
+    shadow.prepare();
+    shadow.prepare(); // A second call starts nothing more.
+    await stageEditTool(changeset, workspace, { path: 'src/a.txt', edits: [{ old_text: 'original a', new_text: 'staged a' }] });
+    // Called while the copy may still be running: it waits, so it never sees a half-copied folder.
+    const result = await shadow.sync();
+    expect(result.copied).toBe(0);
+    expect(result.overlaid).toBe(1);
+    expect(readFileSync(path.join(shadowRoot, 'src/a.txt'), 'utf8')).toBe('staged a\n');
+    expect(readFileSync(path.join(shadowRoot, 'src/b.txt'), 'utf8')).toBe('original b\n');
+    expect(existsSync(path.join(shadowRoot, 'left-over.txt'))).toBe(false);
+    expect(readFileSync(path.join(workspace, 'src/a.txt'), 'utf8')).toBe('original a\n');
+    expect(await run({ command: nodeRead('src/a.txt') })).toContain('staged a');
+  });
+
+  it('a real file changed after prepare is copied again before the run', async () => {
+    shadow.prepare();
+    await shadow.sync();
+    writeFileSync(path.join(workspace, 'src/b.txt'), 'changed on disk after the copy\n');
+    expect((await shadow.sync()).copied).toBe(1);
+    expect(readFileSync(path.join(shadowRoot, 'src/b.txt'), 'utf8')).toBe('changed on disk after the copy\n');
+  });
+
+  it('a failed prepare is silent, and the run reports the problem itself', async () => {
+    const port = new NodeEditorPort(workspace);
+    const inside = new ShadowWorkspace(() => workspace, path.join(workspace, 'shadow'), () => port.listFiles(), changeset);
+    inside.prepare();
+    await expect(inside.sync()).rejects.toThrow(/outside the workspace/);
+  });
+
   it('starts clean each session', async () => {
     mkdirSync(shadowRoot, { recursive: true });
     writeFileSync(path.join(shadowRoot, 'left-over.txt'), 'old');

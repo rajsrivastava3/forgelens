@@ -81,6 +81,7 @@ export function sendAgentRequest(
   text: string,
   options: () => AgentPromptOptions,
   log: (message: string) => void,
+  hooks: { onPlan?: () => void } = {},
 ): Promise<void> {
   return controller.send(text, {
     prepare: async (message) => {
@@ -97,6 +98,8 @@ export function sendAgentRequest(
     // A first turn that ends with a plan is followed, in the same session, by the turn that carries it out.
     followUp: (output) => {
       const plan = parsePlan(output);
+      // A plan means a change is coming, and with it a staged test run: its copy of the workspace can start now.
+      if (plan) hooks.onPlan?.();
       return plan ? { prompt: IMPLEMENT_MESSAGE, plan } : undefined;
     },
   });

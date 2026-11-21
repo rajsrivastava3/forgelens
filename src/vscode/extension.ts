@@ -236,6 +236,7 @@ export function activate(context: vscode.ExtensionContext): void {
         };
       },
       (message) => output.appendLine(message),
+      { onPlan: () => mcp?.prepareShadow() },
     );
 
   const undo = async (): Promise<UndoResult> => {

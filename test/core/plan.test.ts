@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IMPLEMENT_MESSAGE, parsePlan, PLAN_READ_LIMIT, PLAN_RULE } from '../../src/core/context/plan';
+import { sendAgentRequest } from '../../src/core/context/agentPrompt';
+import type { ContextEngine } from '../../src/core/context/engine';
 import { AgentController, type SendOptions } from '../../src/core/trueforge/agentController';
 import type { PlanItem } from '../../src/core/trueforge/runView';
 import type { SessionsApi, TurnEvent } from '../../src/core/trueforge/turnRunner';
@@ -175,5 +177,23 @@ describe('plan, then implement', () => {
     };
     await controller.send('add an export command', options);
     expect(tf.sent).toHaveLength(1);
+  });
+});
+
+describe('sendAgentRequest', () => {
+  // A pack that cannot be built still sends the request, so no index is needed here.
+  const engine = { ensureBuilt: () => Promise.reject(new Error('no index in this test')) } as unknown as ContextEngine;
+
+  it('calls onPlan once a plan is in, before the implement turn, and not for an answer', async () => {
+    const planned = build([{ text: PLAN_TEXT }, { text: 'Applied.' }]);
+    const onPlan = vi.fn(() => expect(planned.tf.sent).toHaveLength(1));
+    await sendAgentRequest(planned.controller, engine, 'add an export command', () => ({}), () => undefined, { onPlan });
+    expect(onPlan).toHaveBeenCalledTimes(1);
+    expect(planned.tf.sent).toHaveLength(2);
+
+    const answered = build([{ text: 'It is defined in src/pkg/helpers.py at line 27.' }]);
+    const notCalled = vi.fn();
+    await sendAgentRequest(answered.controller, engine, 'where is it defined', () => ({}), () => undefined, { onPlan: notCalled });
+    expect(notCalled).not.toHaveBeenCalled();
   });
 });
