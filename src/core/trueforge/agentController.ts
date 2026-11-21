@@ -153,7 +153,8 @@ export class AgentController {
 
   /** Tries each model in turn, retrying the ones whose failure may pass. The same prompt and Context Pack go to each. */
   private async runChain(chain: readonly string[], agentName: string, prompt: string, sendOptions: SendOptions, freshPrompt?: string): Promise<void> {
-    const delays = this.options.retryDelaysMs ?? [1_000, 3_000];
+    // About 1 s, then 2 s, each with jitter: a dead endpoint costs a few seconds before the fallback, not more.
+    const delays = this.options.retryDelaysMs ?? [1_000, 2_000];
     for (let index = 0; index < chain.length; index += 1) {
       const model = chain[index] as string;
       for (let attempt = 0; ; attempt += 1) {
@@ -213,7 +214,9 @@ export class AgentController {
         }
         const next = chain[index + 1];
         if (next) {
-          this.builder.fallback(`${who} failed: ${shortReason(error)}. Switched to ${short(next)} automatically.`);
+          const head = error.kind === 'network' ? `${who} unreachable` : `${who} failed: ${shortReason(error)}`;
+          const switched = attempt > 0 ? `Retried ${attempt} ${attempt === 1 ? 'time' : 'times'}, switched` : 'Switched';
+          this.builder.fallback(`${head}. ${switched} to ${short(next)} automatically.`);
           this.options.onChange();
           break;
         }

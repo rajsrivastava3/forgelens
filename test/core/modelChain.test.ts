@@ -192,6 +192,48 @@ describe('ModelChain in the controller', () => {
     expect(controller.view.status).toBe('done');
   });
 
+  it('an unreachable primary is retried twice, about 1 s then 2 s, with nothing staged in between, then replaced', async () => {
+    const order: string[] = [];
+    const refused: Behaviour = { error: 'Cannot connect to API: connect ECONNREFUSED 127.0.0.1:59999' };
+    const { controller, server } = build(
+      { [PRIMARY]: [refused, refused, refused] },
+      {
+        retryDelaysMs: undefined,
+        discardStaged: () => order.push('discard'),
+        sleep: (ms) => {
+          order.push(`wait ${ms}`);
+          return Promise.resolve();
+        },
+      },
+    );
+    const inner = server.sessions.createTurnStream;
+    server.sessions.createTurnStream = (sessionId, request, options) => {
+      order.push('attempt');
+      return inner(sessionId, request, options);
+    };
+    await controller.send('go');
+    expect(server.attempts).toEqual([PRIMARY, PRIMARY, PRIMARY, FALLBACK]);
+    // Every failed attempt drops what it staged before the next one starts.
+    expect(order.map((step) => step.replace(/\d+/, 'N'))).toEqual(['attempt', 'discard', 'wait N', 'attempt', 'discard', 'wait N', 'attempt', 'discard', 'attempt']);
+    const waits = order.filter((step) => step.startsWith('wait')).map((step) => Number(step.slice(5)));
+    expect(waits[0]).toBeGreaterThanOrEqual(800);
+    expect(waits[0]).toBeLessThanOrEqual(1_200);
+    expect(waits[1]).toBeGreaterThanOrEqual(1_600);
+    expect(waits[1]).toBeLessThanOrEqual(2_400);
+    expect(notices(controller).at(-1)).toMatchObject({ tone: 'warning', text: 'Primary model unreachable. Retried 2 times, switched to gemini-flash-lite-latest automatically.' });
+    expect(controller.activeModel).toBe(FALLBACK);
+    expect(controller.view.status).toBe('done');
+  });
+
+  it('a 400 invalid key is not retried: the fallback starts at once', async () => {
+    const { controller, server, waits, discard } = build({ [PRIMARY]: [err(400, 'API key not valid. Please pass a valid API key.')] });
+    await controller.send('go');
+    expect(server.attempts).toEqual([PRIMARY, FALLBACK]);
+    expect(waits).toEqual([]);
+    expect(discard).toHaveBeenCalledTimes(1);
+    expect(notices(controller).map((notice) => notice.text)).toEqual(['Primary model failed: invalid API key (400). Switched to gemini-flash-lite-latest automatically.']);
+  });
+
   it('a 429 that clears on retry stays on the primary', async () => {
     const { controller, server } = build({ [PRIMARY]: [err(429, 'Slow down.')] });
     await controller.send('go');
