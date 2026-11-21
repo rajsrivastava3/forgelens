@@ -76,6 +76,45 @@ describe('ReviewFlow', () => {
     expect(flow.changeset.isEmpty).toBe(true);
   });
 
+  it('an inline edit with two hunks in one file: reject one, accept the other, and only the accepted one is written', async () => {
+    const helpers = [
+      'def get_debug_flag() -> bool:',
+      '    """Get whether debug mode should be enabled for the app, indicated by the',
+      '    :envvar:`FLASK_DEBUG` environment variable. The default is ``False``.',
+      '    """',
+      ...Array.from({ length: 12 }, (_, i) => `    # context ${i + 1}`),
+      '    val = os.environ.get("FLASK_DEBUG")',
+      '    return bool(val and val.lower() not in {"0", "false", "no"})',
+      '',
+    ].join('\n');
+    writeFileSync(path.join(dir, 'src/helpers.py'), helpers);
+    await stageEditTool(flow.changeset, dir, {
+      path: 'src/helpers.py',
+      edits: [
+        { old_text: 'The default is ``False``.', new_text: 'The default is ``False``. The values 0, false, no, off and n are false.' },
+        { old_text: '{"0", "false", "no"}', new_text: '{"0", "false", "no", "off", "n"}' },
+      ],
+    });
+    const [docstring, logic] = flow.changeset.hunks;
+    expect(flow.changeset.hunks).toHaveLength(2);
+    expect(new Set(flow.changeset.hunks.map((hunk) => hunk.path))).toEqual(new Set(['src/helpers.py']));
+
+    const decision = flow.requestReview();
+    flow.setDecision(docstring?.id as string, 'rejected');
+    flow.setDecision(logic?.id as string, 'accepted');
+    expect(await flow.applyDecisions()).toBe('sent');
+    await expect(decision).resolves.toEqual({ allow: true });
+    const result = await flow.applyApproved('treat off and n as false');
+
+    expect(onDisk('src/helpers.py')).toBe(helpers.replace('{"0", "false", "no"}', '{"0", "false", "no", "off", "n"}'));
+    expect(onDisk('src/helpers.py')).toContain('The default is ``False``.\n');
+    expect(result).toContain('1 of 2 hunks are now on disk');
+    expect(result).toContain(`Applied: ${logic?.id} (src/helpers.py:`);
+    expect(result).toContain(`Rejected by the user: ${docstring?.id} (src/helpers.py:1)`);
+    expect(result).toContain('Do not stage rejected hunks again unless the user asks.');
+    expect(lastCard()).toMatchObject({ phase: 'applied', text: 'Applied 1/2 hunks in 1 file', accepted: 1, rejected: 1, canUndo: true });
+  });
+
   it('counts undecided hunks as rejected', async () => {
     await stageTwoFiles();
     const [first] = flow.changeset.hunks;
