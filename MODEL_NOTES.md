@@ -274,6 +274,22 @@ Task C passed with the invalid-key primary (banner, automatic fallback, `git sta
 Task B passed (81.3 s, 19 requests, Rs 5.65, 4 files, 7 hunks, 56 tests pass, 0 failed tool cards of 22). Sessions
 01m7adejq88axvqsvctjh3kbza, 01m7adfnmz1star6sst6xw6tqz, 01m7adgtq801czzhp2hmwe3r0s.
 
+**Task B phase timings, 22 November.** `rehearse-b.ts` now prints how long each phase took. Baseline, 3 runs on 3.8
+Flash at low effort, medians: Context Pack 0.6 s, explorer 13.3 s, plan turn 21.1 s, implement turn 36.2 s, review
+open at 60.5 s, total 63.4 s. The implement turn is the largest and the most variable, for two reasons. The first
+staged pytest took 8.5 to 9.0 s, of which pytest itself was 0.6 s: the rest was the first copy of the workspace. And
+in 9 of 12 runs the model used `json` without importing it, which cost one failed test round per file. Kept: the copy
+starts in the background once the plan is in (first staged pytest now 1.4 to 3.6 s in every run); `stage_edit`
+says when a Python file uses a common module it never imports (no NameError from `json` in the runs after it; no
+file of the Flask repository is flagged as it is); the explorer sends its three searches in one message (explorer
+median 7.6 s, plan turn 17.3 s). Reverted: an instruction asking the model to add imports itself, which did not stop
+the failures and was slower. Every run passed (19 of 19). The total did not fall with these: the implement turn
+still varies with how many test rounds the model needs, mostly from a new test placed inside an existing one, and
+the same code paths ran 20 to 30% slower later in the session than in the baseline. Final runs: Task A 8.0 s to the
+diff; Task C with an unreachable primary 13.6 s, retried after about 1 s and 2 s, switched at 3.0 s; Task C with an
+invalid key 9.8 s; Task B 50.7 s (46.8 s to the review, 4 files, 5 hunks, 57 tests pass). Sessions
+01m808entyhsw7t0q3mgjtap9w, 01m808fr3f5py0s42c8rpyvbet, 01m808hrb1nx3g70a94tee1248, 01m808m0t1867g5c4wbxnx0sq3.
+
 **TrueForge context-engineering features in the session (B4 evidence).** All in one passing Task B run (low effort,
 70.9 s, 15 requests, Rs 4.69, 3 files, 5 hunks, 57 tests pass): session 01m6r1qcx0s4pp2eqjdyce5tav, at
 http://localhost:8790/sessions/01m6r1qcx0s4pp2eqjdyce5tav. Times are from the start of the first turn.
